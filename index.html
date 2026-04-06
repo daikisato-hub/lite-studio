@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Lite Studio v13.40 - Final Edition</title>
+  <title>Lite Studio Pro</title>
 
   <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
@@ -148,6 +148,7 @@
         return buffer;
     }
 
+    // ★改善①：自動カット位置の精度向上
     function calculateSplitTimes(fullBuffer, texts) {
         const count = texts.length;
         if (count <= 1) return [];
@@ -156,10 +157,13 @@
         const sampleRate = fullBuffer.sampleRate;
         const totalDuration = fullBuffer.duration;
 
-        const separatorEquivalentChars = 15; 
+        // 文字数だけでなく、句読点の数も考慮して長さを推定する
         const lengths = texts.map(t => {
-            const len = normalizeText(t).length;
-            return len > 0 ? len + separatorEquivalentChars : separatorEquivalentChars;
+            const normalized = normalizeText(t);
+            const charCount = normalized.length;
+            const punctuationCount = (normalized.match(/[。！？\.\!\?]/g) || []).length;
+            // 句読点は長めのポーズとして計算
+            return charCount > 0 ? charCount + (punctuationCount * 5) + 15 : 15;
         });
         const totalVirtualLength = lengths.reduce((a, b) => a + b, 0);
         
@@ -171,8 +175,8 @@
         }
 
         const silences = [];
-        const threshold = 0.015; 
-        const minSilence = 0.3; 
+        const threshold = 0.01; // より小さな無音も検知するように閾値を下げる
+        const minSilence = 0.2; // 短い無音も候補として拾う
         let isSilent = false;
         let startIdx = 0;
 
@@ -203,7 +207,7 @@
             for (let j = 0; j < silences.length; j++) {
                 if (usedSilences.has(j)) continue;
                 const diff = Math.abs(silences[j].midTime - expectedTime);
-                if (diff < minDiff && diff < 10.0) { 
+                if (diff < minDiff && diff < 5.0) { // 許容する誤差を狭めて精度を上げる
                     minDiff = diff;
                     bestSilence = { silence: silences[j], index: j };
                 }
@@ -716,7 +720,6 @@
 
       const stopAudio = () => { stopGlobalAudio(); };
 
-      // ★★★ 最終進化：iPhone完全対応 WebCodecs API エンコーダー ★★★
       const exportVideoFromStock = async () => {
           const missing = slides.findIndex((_, i) => !audioStock.has(i) && normalizeText(slides[i].script) !== "");
           if (missing !== -1) {
@@ -742,14 +745,13 @@
               setProgress(0);
 
               const FPS = 30;
-              const TARGET_SAMPLE_RATE = 44100; // 🍏 iPhone対応の「CD音質」
+              const TARGET_SAMPLE_RATE = 44100;
 
-              // mp4-muxerの箱を用意
               let muxer = new Mp4Muxer.Muxer({
                   target: new Mp4Muxer.ArrayBufferTarget(),
                   video: { codec: 'avc', width: 1280, height: 720 },
                   audio: { codec: 'aac', numberOfChannels: 2, sampleRate: TARGET_SAMPLE_RATE },
-                  fastStart: 'in-memory' //
+                  fastStart: 'in-memory'
               });
 
               const videoEncoder = new VideoEncoder({
@@ -757,7 +759,7 @@
                   error: e => console.error(e)
               });
               videoEncoder.configure({ 
-                  codec: 'avc1.4D001F', // Main Profile
+                  codec: 'avc1.4D001F', 
                   width: 1280, height: 720, 
                   bitrate: 2500000, 
                   framerate: FPS 
@@ -777,13 +779,24 @@
               let videoTimestampUs = 0;
               let audioTimestampUs = 0;
 
+              // ★改善②：キンキンする金属音の改善（スムーズなアップサンプリング）
               async function resampleTo44100Stereo(buffer) {
                   if (!buffer) return null;
+                  
+                  // ノイズの原因となる高周波成分をカットするフィルターをかませる
                   const OfflineCtx = window.OfflineAudioContext || window.webkitOfflineAudioContext;
                   const offlineCtx = new OfflineCtx(2, Math.ceil(buffer.duration * TARGET_SAMPLE_RATE), TARGET_SAMPLE_RATE);
+                  
                   const source = offlineCtx.createBufferSource();
                   source.buffer = buffer;
-                  source.connect(offlineCtx.destination);
+
+                  const filter = offlineCtx.createBiquadFilter();
+                  filter.type = 'lowpass';
+                  filter.frequency.value = 10000; // 人間の声より高いキンキンする音（10kHz以上）をカット
+
+                  source.connect(filter);
+                  filter.connect(offlineCtx.destination);
+                  
                   source.start(0);
                   return await offlineCtx.startRendering();
               }
@@ -913,7 +926,7 @@
               const url = URL.createObjectURL(finalBlob);
               const a = document.createElement('a'); 
               a.href = url; 
-              a.download = `lite_studio_FINAL.mp4`;
+              a.download = `LiteStudioPro_Export.mp4`;
               a.click();
 
               toast("✨ 完全なMP4生成に成功しました！", "success");
@@ -973,7 +986,7 @@
           <header className="glass-panel border-b border-slate-700/50 p-3 flex justify-between items-center z-10 sticky top-0">
             <div className="flex items-center gap-4">
               <h1 className="text-xl font-black italic bg-gradient-to-r from-fuchsia-400 via-purple-400 to-indigo-400 bg-clip-text text-transparent drop-shadow-sm">
-                Lite Studio <span className="text-xs not-italic font-normal text-fuchsia-400">v13.40 FINAL</span>
+                Lite Studio <span className="text-xs not-italic font-normal text-fuchsia-400">Pro</span>
               </h1>
               <div className="flex gap-1">
                 {[1,2,3,4].map(n => (
@@ -1096,7 +1109,7 @@
                    <div className="glass-panel p-8 rounded-2xl border-slate-700 space-y-8 animate-fade-in flex flex-col items-center">
                       <div className="w-full flex items-center justify-between mb-4 border-b border-slate-700/50 pb-4">
                         <button onClick={()=>setStep(3)} className="text-xs text-slate-400 hover:text-white transition-colors flex items-center gap-1">← Back</button>
-                        <h3 className="font-bold text-xl text-white tracking-widest">FINAL EXPORT</h3>
+                        <h3 className="font-bold text-xl text-white tracking-widest">EXPORT</h3>
                         <div className="w-16"></div>
                       </div>
 
