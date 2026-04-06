@@ -1,0 +1,1437 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Lite Studio v13.40 - Vercel Edition</title>
+
+  <!-- React & ReactDOM -->
+  <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+
+  <!-- Babel -->
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- FFmpeg.wasm for Audio Transcoding (v0.12 Single Threaded) -->
+  <script src="https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/umd/ffmpeg.js"></script>
+
+  <!-- PDF.js -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <script>
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+  </script>
+
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;700;900&display=swap" rel="stylesheet">
+
+  <style>
+    body { 
+      font-family: 'Noto Sans JP', sans-serif; 
+      background-color: #05050a; 
+      color: #e2e8f0; 
+      overflow: hidden; 
+      background-image: 
+        radial-gradient(circle at 15% 50%, rgba(76, 29, 149, 0.15), transparent 25%), 
+        radial-gradient(circle at 85% 30%, rgba(219, 39, 119, 0.1), transparent 25%);
+    }
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: #0f172a; }
+    ::-webkit-scrollbar-thumb { background: #4c1d95; border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: #db2777; }
+    .glass-panel { background: rgba(15, 23, 42, 0.6); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.08); }
+    @keyframes wave { 0%, 100% { height: 10px; transform: scaleY(1); background: #8b5cf6; } 50% { height: 24px; transform: scaleY(1.5); background: #ec4899; } }
+    .wave-bar { width: 4px; border-radius: 2px; animation: wave 1s ease-in-out infinite; margin: 0 3px; }
+    .wave-bar:nth-child(1) { animation-delay: 0.0s; } .wave-bar:nth-child(2) { animation-delay: 0.1s; } .wave-bar:nth-child(3) { animation-delay: 0.2s; } .wave-bar:nth-child(4) { animation-delay: 0.3s; } .wave-bar:nth-child(5) { animation-delay: 0.4s; }
+    .toggle-checkbox:checked { right: 0; border-color: #d946ef; }
+    .toggle-checkbox:checked + .toggle-label { background: linear-gradient(to right, #8b5cf6, #d946ef); }
+    .canvas-container { background-color: #000; background-image: linear-gradient(rgba(30, 20, 50, 0.3) 1px, transparent 1px), linear-gradient(90deg, rgba(30, 20, 50, 0.3) 1px, transparent 1px); background-size: 40px 40px; }
+    .drag-active { border-color: #d946ef; background-color: rgba(217, 70, 239, 0.1); box-shadow: 0 0 20px rgba(217, 70, 239, 0.2); }
+    .animate-fade-in { animation: fadeIn 0.3s ease-out; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+    .custom-range { -webkit-appearance: none; background: transparent; height: 28px; margin: 0; cursor: pointer; }
+    .custom-range:focus { outline: none; }
+    .custom-range::-webkit-slider-thumb { -webkit-appearance: none; height: 18px; width: 18px; border-radius: 50%; background: #d946ef; cursor: pointer; margin-top: -7px; box-shadow: 0 0 8px rgba(217, 70, 239, 0.9); position: relative; z-index: 10; }
+    .custom-range::-webkit-slider-runnable-track { width: 100%; height: 4px; cursor: pointer; background: #475569; border-radius: 2px; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useRef, useCallback, useMemo } = React;
+
+    const apiKey = ""; 
+    const GEMINI_MODEL = "gemini-2.5-flash-preview-tts"; 
+    const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
+
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const normalizeText = (t) => (t || "").replace(/\r\n/g, "\n").replace(/\s+/g, " ").trim();
+
+    const fetchWithBackoff = async (url, options) => {
+      const delays = [1000, 2000, 4000, 8000, 16000];
+      let lastError;
+      for (let i = 0; i <= delays.length; i++) {
+        try {
+          const response = await fetch(url, options);
+          if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}));
+            if (response.status === 429) await sleep(2000);
+            throw new Error(errorData.error?.message || response.statusText || 'API Request Failed');
+          }
+          return response;
+        } catch (e) {
+          lastError = e;
+          if (i < delays.length) await sleep(delays[i]);
+        }
+      }
+      throw lastError;
+    };
+
+    const ToastContext = React.createContext();
+
+    function ToastProvider({ children }) {
+        const [toasts, setToasts] = useState([]);
+        const addToast = useCallback((msg, type='info') => {
+            const id = Date.now() + Math.random();
+            setToasts(prev => [...prev, { id, msg, type }]);
+            setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 8000);
+        }, []);
+        
+        return (
+            <ToastContext.Provider value={addToast}>
+                {children}
+                <div className="fixed top-4 right-4 z-50 flex flex-col gap-2 pointer-events-none">
+                    {toasts.map(t => (
+                        <div key={t.id} className={`px-4 py-3 rounded-lg shadow-xl text-sm font-bold flex items-center gap-2 border border-white/10 whitespace-pre-wrap animate-fade-in max-w-md ${t.type === 'error' ? 'bg-red-500/95 text-white' : t.type === 'success' ? 'bg-emerald-500/95 text-white' : 'bg-slate-800/95 text-white'}`}>
+                            {t.msg}
+                        </div>
+                    ))}
+                </div>
+            </ToastContext.Provider>
+        );
+    }
+    const useToast = () => React.useContext(ToastContext);
+
+    const audioStock = new Map(); 
+    let globalAudioCtx = null;
+    let globalSource = null;
+
+    function getAudioContext() {
+        if (!globalAudioCtx) globalAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        if (globalAudioCtx.state === 'suspended') globalAudioCtx.resume();
+        return globalAudioCtx;
+    }
+
+    function stopGlobalAudio() {
+      window.speechSynthesis.cancel();
+      if (globalSource) { try { globalSource.stop(); } catch(e){} globalSource = null; }
+    }
+
+    function pcm16ToAudioBuffer(base64PCM, audioCtx) {
+      const binaryString = atob(base64PCM);
+      const len = binaryString.length;
+      const bytes = new Uint8Array(len);
+      for (let i = 0; i < len; i++) bytes[i] = binaryString.charCodeAt(i);
+      const view = new DataView(bytes.buffer);
+      const numSamples = Math.floor(len / 2);
+      const samples = new Float32Array(numSamples);
+      
+      const VOLUME_NORMALIZER = 0.85; 
+
+      for (let i = 0; i < numSamples; i++) {
+        const int16 = view.getInt16(i * 2, true); 
+        samples[i] = (int16 / 32768.0) * VOLUME_NORMALIZER;
+      }
+      const buffer = audioCtx.createBuffer(1, samples.length, 24000);
+      buffer.getChannelData(0).set(samples);
+      return buffer;
+    }
+
+    function applyFadeInOut(buffer, ctx) {
+        const channels = buffer.numberOfChannels;
+        const fadeLength = Math.min(buffer.length / 2, Math.floor(0.015 * buffer.sampleRate)); 
+        for (let c = 0; c < channels; c++) {
+            const data = buffer.getChannelData(c);
+            const len = data.length;
+            for (let i = 0; i < fadeLength; i++) data[i] *= 0.5 * (1 - Math.cos(Math.PI * (i / fadeLength))); 
+            for (let i = 0; i < fadeLength; i++) data[len - 1 - i] *= 0.5 * (1 - Math.cos(Math.PI * (i / fadeLength)));
+        }
+        return buffer;
+    }
+
+    function createSilenceBuffer(ctx, durationSeconds) {
+        return ctx.createBuffer(1, Math.floor(ctx.sampleRate * durationSeconds), ctx.sampleRate);
+    }
+
+    function calculateSplitTimes(fullBuffer, texts) {
+        const count = texts.length;
+        if (count <= 1) return [];
+
+        const channelData = fullBuffer.getChannelData(0);
+        const sampleRate = fullBuffer.sampleRate;
+        const totalDuration = fullBuffer.duration;
+
+        const separatorEquivalentChars = 15; 
+        const lengths = texts.map(t => {
+            const len = normalizeText(t).length;
+            return len > 0 ? len + separatorEquivalentChars : separatorEquivalentChars;
+        });
+        const totalVirtualLength = lengths.reduce((a, b) => a + b, 0);
+        
+        const expectedSplitTimes = [];
+        let accLen = 0;
+        for (let i = 0; i < count - 1; i++) {
+            accLen += lengths[i];
+            expectedSplitTimes.push((accLen / totalVirtualLength) * totalDuration);
+        }
+
+        const silences = [];
+        const threshold = 0.015; 
+        const minSilence = 0.3; 
+        let isSilent = false;
+        let startIdx = 0;
+
+        for (let i = 0; i < channelData.length; i++) {
+            if (Math.abs(channelData[i]) < threshold) {
+                if (!isSilent) { isSilent = true; startIdx = i; }
+            } else {
+                if (isSilent) {
+                    isSilent = false;
+                    const duration = (i - startIdx) / sampleRate;
+                    if (duration >= minSilence) silences.push({ start: startIdx, end: i, midTime: ((startIdx + i) / 2) / sampleRate });
+                }
+            }
+        }
+        if (isSilent) {
+             const duration = (channelData.length - startIdx) / sampleRate;
+             if (duration >= minSilence) silences.push({ start: startIdx, end: channelData.length, midTime: ((startIdx + channelData.length) / 2) / sampleRate });
+        }
+
+        const actualSplitTimes = [];
+        const usedSilences = new Set();
+
+        for (let i = 0; i < expectedSplitTimes.length; i++) {
+            const expectedTime = expectedSplitTimes[i];
+            let bestSilence = null;
+            let minDiff = Infinity;
+
+            for (let j = 0; j < silences.length; j++) {
+                if (usedSilences.has(j)) continue;
+                const diff = Math.abs(silences[j].midTime - expectedTime);
+                if (diff < minDiff && diff < 10.0) { 
+                    minDiff = diff;
+                    bestSilence = { silence: silences[j], index: j };
+                }
+            }
+
+            if (bestSilence) {
+                usedSilences.add(bestSilence.index);
+                actualSplitTimes.push(bestSilence.silence.midTime);
+            } else {
+                actualSplitTimes.push(expectedTime);
+            }
+        }
+
+        actualSplitTimes.sort((a, b) => a - b);
+        return actualSplitTimes;
+    }
+
+    function splitBufferByTimes(fullBuffer, times, slidesCount, ctx) {
+        const sampleRate = fullBuffer.sampleRate;
+        const channelData = fullBuffer.getChannelData(0);
+        const buffers = [];
+        
+        let startSec = 0;
+        for (let i = 0; i < slidesCount; i++) {
+            let endSec = i < times.length ? times[i] : Math.max(fullBuffer.duration, startSec + 3.0);
+            
+            const MAX_ALLOWED_SEC = fullBuffer.duration + 5.0;
+            if (endSec > MAX_ALLOWED_SEC) endSec = MAX_ALLOWED_SEC;
+            if (startSec > endSec) startSec = endSec - 0.1;
+            
+            const durationSec = Math.max(0.1, endSec - startSec);
+            const durationSamples = Math.floor(durationSec * sampleRate);
+            
+            const buf = ctx.createBuffer(1, durationSamples, sampleRate);
+            const newData = buf.getChannelData(0);
+            
+            const copyStartSample = Math.floor(startSec * sampleRate);
+            const copyEndSample = Math.floor(endSec * sampleRate);
+            
+            const actualStart = Math.min(channelData.length, Math.max(0, copyStartSample));
+            const actualEnd = Math.min(channelData.length, Math.max(0, copyEndSample));
+            const actualLen = actualEnd - actualStart;
+            
+            if (actualLen > 0) {
+                const copyLen = Math.min(actualLen, durationSamples);
+                newData.set(channelData.subarray(actualStart, actualStart + copyLen), 0);
+            }
+            
+            buffers.push(applyFadeInOut(buf, ctx));
+            startSec = endSec;
+        }
+        return buffers;
+    }
+
+    const preloadImages = async (slides) => {
+        const loadedImages = [];
+        for (const s of slides) {
+            const img = new Image();
+            img.src = s.imageDataUrl;
+            await new Promise((resolve, reject) => {
+                img.onload = () => resolve();
+                img.onerror = () => reject(new Error(`Slide ${s.id} error`));
+            });
+            loadedImages.push(img);
+        }
+        return loadedImages;
+    }
+
+    function splitForSubtitles(text) {
+      if (!text) return [];
+      const MAX_LENGTH = 35; 
+      let parts = text.split(/([。！？\.!?、,])/g);
+      let chunks = [];
+      for(let i=0; i<parts.length; i+=2) {
+          let sentence = parts[i] + (parts[i+1] || "");
+          if(!sentence.trim()) continue;
+          chunks.push(sentence);
+      }
+      const refined = [];
+      for (const seg of chunks) {
+        if (seg.length <= MAX_LENGTH) {
+          refined.push(seg);
+        } else {
+          let remaining = seg;
+          while (remaining.length > 0) {
+            let cutIdx = MAX_LENGTH;
+            const goodBreak = remaining.slice(0, MAX_LENGTH).lastIndexOf("、");
+            if (goodBreak > 10) cutIdx = goodBreak + 1;
+            refined.push(remaining.slice(0, cutIdx));
+            remaining = remaining.slice(cutIdx);
+          }
+        }
+      }
+      return refined;
+    }
+
+    async function renderSlidesFromPdf(file) {
+      const arrayBuffer = await file.arrayBuffer();
+      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+      const slides = [];
+      for (let i = 1; i <= pdf.numPages; i++) {
+        const page = await pdf.getPage(i);
+        const viewport = page.getViewport({ scale: 2.0 }); 
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        canvas.width = viewport.width; 
+        canvas.height = viewport.height;
+        await page.render({ canvasContext: ctx, viewport }).promise;
+        slides.push({ id: i, imageDataUrl: canvas.toDataURL('image/jpeg', 0.8), script: '' });
+      }
+      return slides;
+    }
+
+    function MainApp() {
+      const toast = useToast();
+      const [slides, setSlides] = useState([]);
+      const [step, setStep] = useState(1);
+      const [jsonText, setJsonText] = useState('');
+      const [status, setStatus] = useState(''); 
+      const [isBusy, setIsBusy] = useState(false);
+      const [devMode, setDevMode] = useState(false);
+      const [progress, setProgress] = useState(0);
+
+      const [localApiKey, setLocalApiKey] = useState(apiKey || '');
+      const [isDraggingSplitter, setIsDraggingSplitter] = useState(false);
+
+      const [useBrowserTTS, setUseBrowserTTS] = useState(false);
+      const [showSubtitle, setShowSubtitle] = useState(true);
+      const [speed, setSpeed] = useState(1.0);
+      const [voiceName, setVoiceName] = useState('Kore');
+      const [activeSlideIdx, setActiveSlideIdx] = useState(0);
+      
+      const availableFormats = useMemo(() => {
+        const candidates = [
+          { mime: 'video/mp4; codecs="avc1.4d002a"', ext: 'mp4', label: '究極MP4 (AAC音質変換)', transcodeToAAC: true },
+          { mime: 'video/webm; codecs="avc1.4d002a"', ext: 'mp4', label: '究極MP4 (AAC変換/代替)', transcodeToAAC: true },
+          { mime: 'video/mp4', ext: 'mp4', label: '標準MP4 (変換なし/Opus)', transcodeToAAC: false },
+          { mime: 'video/webm; codecs=vp9,opus', ext: 'webm', label: 'WebM (高品質/推奨)', transcodeToAAC: false }
+        ];
+        
+        const supported = [];
+        for (const c of candidates) {
+            try { 
+                if (MediaRecorder.isTypeSupported(c.mime)) supported.push(c); 
+            } catch(e) {}
+        }
+        return supported.length > 0 ? supported : [{ mime: '', ext: 'webm', label: 'Default fallback', transcodeToAAC: false }];
+      }, []);
+
+      const [exportFormat, setExportFormat] = useState(availableFormats[0]); 
+
+      const canvasRef = useRef(null);
+      const containerRef = useRef(null);
+      const [leftPanelWidth, setLeftPanelWidth] = useState(40);
+      const [dragActive, setDragActive] = useState(false);
+      const preloadedImagesRef = useRef([]);
+
+      const [fullBuffer, setFullBuffer] = useState(null);
+      const [showManualEditor, setShowManualEditor] = useState(false);
+      const [manualSplitTimes, setManualSplitTimes] = useState([]);
+      const [editorIndividualBuffers, setEditorIndividualBuffers] = useState(new Map());
+
+      const [editorActiveIdx, setEditorActiveIdx] = useState(-1);
+      const [editorIsPlaying, setEditorIsPlaying] = useState(false);
+      const [editorSeekRatio, setEditorSeekRatio] = useState(0);
+      const [editingSplitIdx, setEditingSplitIdx] = useState(-1);
+      
+      const activeIdxRef = useRef(-1);
+      const isPlayingRef = useRef(false);
+      const isSeekingRef = useRef(false);
+      const editorAnimRef = useRef(null);
+      const editorAudioRef = useRef({ source: null, startTime: 0, offset: 0, duration: 0 });
+
+      const updatePlaybackState = useCallback((idx, isPlaying, ratio) => {
+          setEditorActiveIdx(idx);
+          setEditorIsPlaying(isPlaying);
+          if (ratio !== undefined) setEditorSeekRatio(ratio);
+          
+          activeIdxRef.current = idx;
+          isPlayingRef.current = isPlaying;
+      }, []);
+
+      const drawSlideSync = useCallback((slideIdx, subtitleText = "") => {
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d');
+        const img = preloadedImagesRef.current[slideIdx];
+        
+        ctx.fillStyle = "#000";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        let imgX, imgY, imgW, imgH;
+        
+        if (showSubtitle) {
+            const areaH = canvas.height * 0.8;
+            if (img) {
+                const scale = Math.min(canvas.width / img.width, areaH / img.height);
+                imgW = img.width * scale;
+                imgH = img.height * scale;
+                imgX = (canvas.width - imgW) / 2;
+                imgY = 20 + (areaH - imgH) / 2;
+            }
+        } else {
+            const areaH = canvas.height;
+            const areaW = canvas.width;
+            if (img) {
+                const scale = Math.min((areaW * 0.95) / img.width, (areaH * 0.95) / img.height);
+                imgW = img.width * scale;
+                imgH = img.height * scale;
+                imgX = (areaW - imgW) / 2;
+                imgY = (areaH - imgH) / 2;
+            }
+        }
+
+        if (img) ctx.drawImage(img, imgX, imgY, imgW, imgH);
+        else if (slides[slideIdx]) {
+            const tmp = new Image();
+            tmp.src = slides[slideIdx].imageDataUrl;
+            tmp.onload = () => drawSlideSync(slideIdx, subtitleText); 
+            return;
+        }
+
+        if (showSubtitle && subtitleText) {
+            const subH = canvas.height * 0.16;
+            ctx.fillStyle = "rgba(0,0,0,0.85)";
+            ctx.fillRect(40, canvas.height - subH - 30, canvas.width - 80, subH);
+            ctx.fillStyle = "#fff";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.font = "bold 52px 'Noto Sans JP'";
+            if (subtitleText.length > 25) ctx.font = "bold 40px 'Noto Sans JP'";
+            ctx.fillText(subtitleText, canvas.width / 2, canvas.height - 30 - (subH / 2));
+        }
+
+      }, [slides, showSubtitle, preloadedImagesRef.current]); 
+
+      useEffect(() => {
+        if (slides.length > 0 && !isBusy) drawSlideSync(activeSlideIdx, splitForSubtitles(slides[activeSlideIdx].script)[0] || "");
+      }, [activeSlideIdx, slides, drawSlideSync, isBusy]);
+
+      const handleDrop = async (e) => {
+        e.preventDefault(); e.stopPropagation(); setDragActive(false);
+        if (e.dataTransfer.files && e.dataTransfer.files[0] && e.dataTransfer.files[0].type === "application/pdf") {
+            setStatus("PDFレンダリング中...");
+            try { 
+                setSlides(await renderSlidesFromPdf(e.dataTransfer.files[0])); 
+                setStep(2); setStatus(""); 
+                toast("PDF読込完了", "success"); 
+            } 
+            catch(err) { toast(err.message, "error"); setStatus("エラー"); }
+        }
+      };
+
+      const generateStockAudioBulk = async () => {
+        if (!localApiKey && !devMode) { toast("APIキーを入力してください", "error"); return; }
+        
+        setIsBusy(true); stopGlobalAudio();
+        const ctx = getAudioContext(); 
+        setStatus("音声を生成中... (API 1回消費)");
+        setProgress(30);
+
+        try {
+            const separator = "。\n\n\n\n　　　　　\n\n\n\n"; 
+            const combinedScript = slides.map(s => {
+                let txt = normalizeText(s.script);
+                if(!txt.endsWith("。") && !txt.endsWith("！") && !txt.endsWith("？")) txt += "。";
+                return txt + separator;
+            }).join("");
+
+            let buffer;
+
+            if (devMode) {
+                await sleep(1500);
+                buffer = ctx.createBuffer(1, ctx.sampleRate * slides.length * 3.0, ctx.sampleRate);
+            } else {
+                const response = await fetchWithBackoff(`${GEMINI_URL}?key=${localApiKey}`, {
+                    method: "POST", headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ 
+                        contents: [{ parts: [{ text: combinedScript }] }], 
+                        generationConfig: { responseModalities: ["AUDIO"], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voiceName } } } },
+                        model: GEMINI_MODEL
+                    })
+                });
+                const data = await response.json();
+                buffer = pcm16ToAudioBuffer(data.candidates[0].content.parts[0].inlineData.data, ctx);
+            }
+
+            setStatus("初期カットポイントを計算中...");
+            setProgress(80);
+
+            setFullBuffer(buffer);
+            setEditorIndividualBuffers(new Map()); 
+
+            const texts = slides.map(s => s.script);
+            const times = calculateSplitTimes(buffer, texts);
+            setManualSplitTimes(times);
+            
+            setShowManualEditor(true);
+            toast("音声の生成が完了しました！カット位置を確認・調整してください。", "success");
+
+        } catch (e) {
+            toast("エラー: " + e.message, "error");
+        } finally {
+            setIsBusy(false);
+            setProgress(0);
+            setStatus("");
+        }
+      };
+
+      const adjustSplitTime = (idx, delta) => {
+          setManualSplitTimes(prev => {
+              const arr = [...prev];
+              for(let j = idx; j < arr.length; j++) {
+                  arr[j] = Math.max(0, arr[j] + delta);
+              }
+              for(let j = 1; j < arr.length; j++) {
+                  if (arr[j] <= arr[j-1]) arr[j] = arr[j-1] + 0.1;
+              }
+              return arr;
+          });
+      };
+
+      const handleSplitTimeChange = (idx, val) => {
+          let num = parseFloat(val);
+          if (isNaN(num)) return;
+          setManualSplitTimes(prev => {
+              const arr = [...prev];
+              const delta = num - arr[idx];
+              for(let j = idx; j < arr.length; j++) {
+                  arr[j] = Math.max(0, arr[j] + delta);
+              }
+              for(let j = 1; j < arr.length; j++) {
+                  if (arr[j] <= arr[j-1]) arr[j] = arr[j-1] + 0.1;
+              }
+              return arr;
+          });
+      };
+
+      const pauseEditorSegment = useCallback(() => {
+          stopGlobalAudio();
+          if (editorAnimRef.current) cancelAnimationFrame(editorAnimRef.current);
+          updatePlaybackState(activeIdxRef.current, false);
+      }, [updatePlaybackState]);
+
+      const startEditorSegment = useCallback((idx, start, end, duration, startOffsetRatio) => {
+          stopGlobalAudio();
+          if (editorAnimRef.current) cancelAnimationFrame(editorAnimRef.current);
+          
+          updatePlaybackState(idx, true, startOffsetRatio);
+          
+          const startOffsetSec = duration * startOffsetRatio;
+          const ctx = getAudioContext();
+          const source = ctx.createBufferSource();
+          globalSource = source; 
+          
+          if (editorIndividualBuffers.has(idx)) {
+              source.buffer = editorIndividualBuffers.get(idx);
+              source.connect(ctx.destination);
+              source.start(0, startOffsetSec);
+          } else {
+              source.buffer = fullBuffer;
+              source.connect(ctx.destination);
+              const safeOffset = Math.min(startOffsetSec, Math.max(0, duration - 0.1));
+              source.start(0, start + safeOffset, duration - safeOffset);
+          }
+          
+          editorAudioRef.current = {
+              source,
+              startTime: ctx.currentTime,
+              offset: startOffsetSec,
+              duration: duration
+          };
+          
+          const loop = () => {
+              if (activeIdxRef.current !== idx || !isPlayingRef.current) return;
+              
+              if (!isSeekingRef.current) {
+                  const elapsed = ctx.currentTime - editorAudioRef.current.startTime + editorAudioRef.current.offset;
+                  if (elapsed >= duration) {
+                      updatePlaybackState(idx, false, 1);
+                      return;
+                  }
+                  setEditorSeekRatio(elapsed / duration);
+              }
+              editorAnimRef.current = requestAnimationFrame(loop);
+          };
+          editorAnimRef.current = requestAnimationFrame(loop);
+      }, [fullBuffer, editorIndividualBuffers, updatePlaybackState]);
+
+      const togglePlayPause = (idx, start, end, duration) => {
+          if (activeIdxRef.current === idx && isPlayingRef.current) {
+              pauseEditorSegment();
+          } else {
+              let ratio = 0;
+              if (activeIdxRef.current === idx) {
+                  ratio = editorSeekRatio >= 1 ? 0 : editorSeekRatio;
+              }
+              startEditorSegment(idx, start, end, duration, ratio);
+          }
+      };
+
+      const handleSeekChange = (idx, ratio) => {
+          isSeekingRef.current = true;
+          if (activeIdxRef.current !== idx) {
+              updatePlaybackState(idx, false, ratio);
+          } else {
+              setEditorSeekRatio(ratio);
+          }
+      };
+
+      const handleSeekEnd = (idx, start, end, duration, ratio) => {
+          isSeekingRef.current = false;
+          if (isPlayingRef.current && activeIdxRef.current === idx) {
+              startEditorSegment(idx, start, end, duration, ratio);
+          } else {
+              updatePlaybackState(idx, false, ratio);
+          }
+      };
+
+      const regenerateSingleInEditor = async (idx) => {
+          if (!localApiKey && !devMode) { toast("APIキーを入力してください", "error"); return; }
+          setIsBusy(true); setStatus(`単一生成中: Slide ${idx+1}`);
+          const ctx = getAudioContext();
+          try {
+              const text = normalizeText(slides[idx].script);
+              if (!text) {
+                  setEditorIndividualBuffers(prev => { const m = new Map(prev); m.delete(idx); return m; });
+                  return;
+              }
+              let buffer;
+              if (devMode) {
+                  buffer = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate);
+              } else {
+                  const response = await fetchWithBackoff(`${GEMINI_URL}?key=${localApiKey}`, {
+                      method: "POST", headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ 
+                          contents: [{ parts: [{ text: text }] }], 
+                          generationConfig: { responseModalities: ["AUDIO"], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voiceName } } } },
+                          model: GEMINI_MODEL
+                      })
+                  });
+                  const data = await response.json();
+                  buffer = pcm16ToAudioBuffer(data.candidates[0].content.parts[0].inlineData.data, ctx);
+              }
+              applyFadeInOut(buffer, ctx);
+              setEditorIndividualBuffers(prev => { const m = new Map(prev); m.set(idx, buffer); return m; });
+              
+              updatePlaybackState(idx, false, 0);
+
+              toast(`スライド ${idx+1} の音声を個別に更新しました`, "success");
+          } catch(e) { 
+              toast("更新エラー: " + e.message, "error"); 
+          } finally { setIsBusy(false); setStatus(""); }
+      };
+
+      const applyManualSplit = () => {
+          try {
+              pauseEditorSegment();
+              const ctx = getAudioContext();
+              const buffers = splitBufferByTimes(fullBuffer, manualSplitTimes, slides.length, ctx);
+              audioStock.clear();
+              buffers.forEach((buf, idx) => {
+                  if (idx < slides.length) {
+                      if (editorIndividualBuffers.has(idx)) {
+                          audioStock.set(idx, editorIndividualBuffers.get(idx));
+                      } else {
+                          audioStock.set(idx, buf);
+                      }
+                  }
+              });
+              setShowManualEditor(false);
+              toast("音声を各スライドに割り当てました！", "success");
+              setActiveSlideIdx(0);
+          } catch(e) {
+              console.error(e);
+              toast("確定中にエラーが発生しました。設定時間が長すぎる可能性があります。: " + e.message, "error");
+          }
+      };
+
+      const generateSingleStock = async (idx) => {
+          if (!localApiKey && !devMode) { toast("APIキーを入力してください", "error"); return; }
+          setIsBusy(true); setStatus(`単一生成中: Slide ${idx+1}`);
+          const ctx = getAudioContext();
+          try {
+              const text = normalizeText(slides[idx].script);
+              if (!text) {
+                  audioStock.delete(idx);
+                  return;
+              }
+              
+              let buffer;
+              if (devMode) {
+                  buffer = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate);
+              } else {
+                  const response = await fetchWithBackoff(`${GEMINI_URL}?key=${localApiKey}`, {
+                      method: "POST", headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ 
+                          contents: [{ parts: [{ text: text }] }], 
+                          generationConfig: { responseModalities: ["AUDIO"], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voiceName } } } },
+                          model: GEMINI_MODEL
+                      })
+                  });
+                  const data = await response.json();
+                  buffer = pcm16ToAudioBuffer(data.candidates[0].content.parts[0].inlineData.data, ctx);
+              }
+              applyFadeInOut(buffer, ctx);
+              audioStock.set(idx, buffer);
+              toast(`スライド ${idx+1} の音声を個別に更新しました`, "success");
+          } catch(e) { 
+              toast("更新エラー: " + e.message, "error"); 
+          } finally { setIsBusy(false); setStatus(""); }
+      };
+
+      const playStockAudio = async (idx) => {
+        stopGlobalAudio();
+        const ctx = getAudioContext();
+        if (audioStock.has(idx)) {
+            const buf = audioStock.get(idx);
+            globalSource = ctx.createBufferSource();
+            globalSource.buffer = buf;
+            globalSource.connect(ctx.destination);
+            globalSource.start();
+            globalSource.onended = () => { globalSource = null; };
+        } else {
+            const u = new SpeechSynthesisUtterance(slides[idx].script);
+            u.lang = 'ja-JP'; u.rate = speed;
+            window.speechSynthesis.speak(u);
+        }
+      };
+
+      const stopAudio = () => { stopGlobalAudio(); };
+
+      const exportVideoFromStock = async () => {
+          const missing = slides.findIndex((_, i) => !audioStock.has(i) && normalizeText(slides[i].script) !== "");
+          if (missing !== -1 && !useBrowserTTS) {
+              toast(`スライド${missing+1}の音声がありません。\n更新ボタンで補充してください。`, "error");
+              return;
+          }
+
+          setIsBusy(true); setStatus("画像をプリロード中...");
+          try {
+              preloadedImagesRef.current = await preloadImages(slides);
+          } catch(e) { toast("画像読込失敗: " + e.message, "error"); setIsBusy(false); return; }
+
+          drawSlideSync(0, "");
+          await sleep(100);
+
+          setStatus("動画書き出し準備...");
+          const ctx = getAudioContext();
+          const dest = ctx.createMediaStreamDestination();
+          const canvasStream = canvasRef.current.captureStream(30);
+          const combined = new MediaStream([...canvasStream.getVideoTracks(), ...dest.stream.getAudioTracks()]);
+          
+          let mimeType = exportFormat.mime;
+          try { if (!MediaRecorder.isTypeSupported(mimeType)) mimeType = 'video/webm'; } catch(e) { mimeType = 'video/webm'; }
+
+          const recorder = new MediaRecorder(combined, { 
+              mimeType, 
+              videoBitsPerSecond: 8000000,
+              audioBitsPerSecond: 256000
+          }); 
+          const chunks = [];
+          
+          recorder.ondataavailable = e => { if (e.data && e.data.size > 0) chunks.push(e.data); };
+          let stopResolve;
+          const stopPromise = new Promise(r => stopResolve = r);
+          recorder.onstop = stopResolve;
+          
+          let hasError = false;
+          const INTER_SLIDE_SILENCE = 2.0;
+
+          let bgWorker = null;
+          const workerCode = `
+            let timer = null;
+            self.onmessage = function(e) {
+              if (e.data === 'start') {
+                timer = setInterval(() => self.postMessage('tick'), 1000 / 30);
+              } else if (e.data === 'stop') {
+                clearInterval(timer);
+              }
+            };
+          `;
+          try {
+              const workerBlob = new Blob([workerCode], { type: 'application/javascript' });
+              const workerUrl = URL.createObjectURL(workerBlob);
+              bgWorker = new Worker(workerUrl);
+              bgWorker.postMessage('start');
+          } catch(e) {
+              console.warn("Worker creation blocked. Using fallback timer.");
+          }
+
+          const playSegmentWithHybridSync = (idx, buffer, durationSec, isSilence) => {
+              if (durationSec <= 0) return Promise.resolve();
+              
+              return new Promise((resolve, reject) => {
+                  let source = null;
+                  let startTime = ctx.currentTime;
+                  let isPlaying = true;
+                  
+                  let fallbackTimer = null;
+                  let tickCount = 0;
+                  
+                  const finish = () => {
+                      if (!isPlaying) return;
+                      isPlaying = false;
+                      if (bgWorker) bgWorker.removeEventListener('message', messageHandler);
+                      if (fallbackTimer) clearInterval(fallbackTimer);
+                      resolve();
+                  };
+
+                  if (!isSilence && buffer) {
+                      source = ctx.createBufferSource();
+                      source.buffer = buffer;
+                      source.connect(dest);
+                      source.onended = finish; 
+                      source.start(startTime);
+                  }
+                  
+                  const scriptText = normalizeText(slides[idx].script);
+                  const segments = splitForSubtitles(scriptText);
+                  
+                  const messageHandler = () => {
+                      try {
+                          if (!isPlaying) return;
+                          const elapsed = ctx.currentTime - startTime;
+                          tickCount++;
+                          
+                          if (!isSilence) {
+                              if (showSubtitle && segments.length) {
+                                  const p = Math.min(elapsed / durationSec, 0.99);
+                                  const segIdx = Math.floor(p * segments.length);
+                                  drawSlideSync(idx, segments[segIdx] || "");
+                              } else {
+                                  drawSlideSync(idx, "");
+                              }
+                          } else {
+                              drawSlideSync(idx, "");
+                              const canvas = canvasRef.current;
+                              if (canvas) {
+                                  const context = canvas.getContext('2d');
+                                  context.fillStyle = `rgba(0,0,0,${0.01 + (tickCount % 2) * 0.01})`;
+                                  context.fillRect(0, 0, 1, 1);
+                              }
+                              if (elapsed >= durationSec) {
+                                  finish();
+                              }
+                          }
+                      } catch(err) {
+                          finish(); 
+                      }
+                  };
+                  
+                  if (bgWorker) {
+                      bgWorker.addEventListener('message', messageHandler);
+                  } else {
+                      fallbackTimer = setInterval(messageHandler, 1000 / 30);
+                  }
+              });
+          };
+
+          let finalBlob = null;
+
+          try {
+              recorder.start(); 
+
+              for (let i = 0; i < slides.length; i++) {
+                  setActiveSlideIdx(i);
+                  setStatus(`録画中: ${i+1}/${slides.length}`);
+                  setProgress(((i + 1) / slides.length) * 100);
+                  
+                  if (!useBrowserTTS) {
+                      await playSegmentWithHybridSync(i, null, 0.5, true);
+
+                      if (audioStock.has(i)) {
+                          const buffer = audioStock.get(i);
+                          await playSegmentWithHybridSync(i, buffer, buffer.duration, false);
+                      }
+
+                      await playSegmentWithHybridSync(i, null, INTER_SLIDE_SILENCE - 0.5, true);
+
+                  } else {
+                      await new Promise(resolve => {
+                          const u = new SpeechSynthesisUtterance(slides[i].script);
+                          u.lang = 'ja-JP'; u.rate = speed;
+                          const scriptText = normalizeText(slides[i].script);
+                          const segments = splitForSubtitles(scriptText);
+                          let startTimestamp = 0;
+                          const estDur = Math.max(scriptText.length * 200 / speed, 2000); 
+                          
+                          let fallbackTimer = null;
+                          const ttsMessageHandler = () => {
+                              if (startTimestamp === 0) return;
+                              const elapsed = Date.now() - startTimestamp;
+                              if (showSubtitle && segments.length) {
+                                  const p = Math.min(elapsed / estDur, 0.95);
+                                  const idx = Math.floor(p * segments.length);
+                                  drawSlideSync(i, segments[idx] || "");
+                              } else {
+                                  drawSlideSync(i, "");
+                              }
+                          };
+                          
+                          if (bgWorker) {
+                              bgWorker.addEventListener('message', ttsMessageHandler);
+                          } else {
+                              fallbackTimer = setInterval(ttsMessageHandler, 1000 / 30);
+                          }
+
+                          u.onstart = () => { startTimestamp = Date.now(); };
+                          const cleanup = () => {
+                              if(bgWorker) bgWorker.removeEventListener('message', ttsMessageHandler);
+                              if(fallbackTimer) clearInterval(fallbackTimer);
+                              resolve();
+                          };
+                          u.onend = cleanup;
+                          u.onerror = cleanup;
+                          
+                          setTimeout(cleanup, estDur + 2000);
+                          
+                          window.speechSynthesis.cancel();
+                          window.speechSynthesis.speak(u);
+                      });
+                      
+                      await playSegmentWithHybridSync(i, null, INTER_SLIDE_SILENCE, true);
+                  }
+              }
+              
+              await playSegmentWithHybridSync(slides.length - 1, null, 1.0, true);
+
+          } catch (e) {
+              hasError = true;
+              toast("録画エラー: " + e.message, "error");
+          } finally {
+              if (bgWorker) {
+                  bgWorker.postMessage('stop');
+                  bgWorker.terminate();
+              }
+              
+              recorder.stop();
+              await stopPromise;
+              
+              if (!hasError && chunks.length > 0) {
+                  finalBlob = new Blob(chunks, { type: mimeType });
+                  
+                  if (exportFormat.transcodeToAAC) {
+                      try {
+                          setStatus("FFmpeg エンジンをロード中...");
+                          const { FFmpeg } = window.FFmpeg;
+                          const ffmpeg = new FFmpeg();
+                          
+                          ffmpeg.on('progress', ({ progress }) => {
+                              setProgress(progress * 100);
+                              setStatus(`AACオーディオへ変換中... ${Math.round(progress * 100)}%`);
+                          });
+                          
+                          // WebWorker内でFFmpegを安全に起動（Vercel推奨設定）
+                          await ffmpeg.load({
+                              coreURL: 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd/ffmpeg-core.js',
+                              wasmURL: 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd/ffmpeg-core.wasm'
+                          });
+                          
+                          setStatus("動画データをメモリに展開中...");
+                          const fileData = new Uint8Array(await finalBlob.arrayBuffer());
+                          await ffmpeg.writeFile('input_video', fileData);
+                          
+                          setStatus("映像と音声を再結合中 (MP4/AAC)...");
+                          await ffmpeg.exec(['-i', 'input_video', '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k', 'output.mp4']);
+                          
+                          const data = await ffmpeg.readFile('output.mp4');
+                          finalBlob = new Blob([data.buffer], { type: 'video/mp4' });
+                          toast("✨ AAC形式への変換に成功しました！", "success");
+                      } catch (err) {
+                          console.error("FFmpeg error:", err);
+                          toast("AAC変換に失敗しました。元のフォーマットで出力します。", "error");
+                      }
+                  }
+
+                  const url = URL.createObjectURL(finalBlob);
+                  const a = document.createElement('a'); 
+                  a.href = url; 
+                  a.download = `lite_studio_v13_40_vercel.${exportFormat.ext}`;
+                  a.click();
+                  toast("動画の書き出しが完了しました！", "success");
+              } else {
+                  toast("⚠️ 動画データの生成に失敗しました（0バイト）。環境に問題がある可能性があります。", "error");
+              }
+              setIsBusy(false); setStatus(hasError || chunks.length === 0 ? "書出失敗" : "完了");
+              setProgress(0);
+          }
+      };
+
+      const applyJsonString = (text) => {
+        try {
+          const json = JSON.parse(text);
+          const newSlides = [...slides];
+          const list = json.slides || (Array.isArray(json) ? json : []);
+          let successCount = 0, outOfRangeCount = 0;
+
+          list.forEach((item, idx) => {
+             const targetIndex = item.slide ? parseInt(item.slide) - 1 : idx;
+             if (targetIndex >= 0 && targetIndex < newSlides.length && newSlides[targetIndex]) {
+                 newSlides[targetIndex].script = item.script || "";
+                 successCount++;
+             } else outOfRangeCount++;
+          });
+          
+          setSlides(newSlides); setStep(3);
+          
+          if (outOfRangeCount > 0) toast(`✅ 成功: ${successCount}件\n⚠️ 未反映: ${outOfRangeCount}件\nPDFの枚数を超えたデータはカットされました。`, "error");
+          else toast(`✅ ${successCount}件の適用が完了しました`, "success");
+
+        } catch (err) { toast("JSONエラー: " + err.message, "error"); }
+      };
+
+      const handleJsonUpload = async (e) => {
+        if (e.target.files[0]) {
+            const text = await e.target.files[0].text();
+            applyJsonString(text);
+        }
+      };
+
+      return (
+        <div className="h-screen flex flex-col text-sm" 
+          onMouseMove={e => {
+            if (isDraggingSplitter) {
+              e.preventDefault();
+              const newWidth = (e.clientX / window.innerWidth) * 100;
+              if (newWidth > 20 && newWidth < 80) setLeftPanelWidth(newWidth);
+            }
+          }}
+          onMouseUp={() => setIsDraggingSplitter(false)}
+          onMouseLeave={() => setIsDraggingSplitter(false)}
+        >
+          <header className="glass-panel border-b border-slate-700/50 p-3 flex justify-between items-center z-10 sticky top-0">
+            <div className="flex items-center gap-4">
+              <h1 className="text-xl font-black italic bg-gradient-to-r from-fuchsia-400 via-purple-400 to-indigo-400 bg-clip-text text-transparent drop-shadow-sm">
+                Lite Studio <span className="text-xs not-italic font-normal text-fuchsia-400">v13.40 Vercel</span>
+              </h1>
+              <div className="flex gap-1">
+                {[1,2,3,4].map(n => (
+                  <button key={n} onClick={()=>slides.length > 0 && setStep(n)} disabled={n > 1 && slides.length === 0}
+                    className={`px-4 py-1.5 rounded-full text-xs font-bold transition-all duration-300 ${step===n ? 'bg-gradient-to-r from-purple-600 to-pink-600 text-white shadow-[0_0_10px_rgba(219,39,119,0.5)]' : 'bg-slate-800/50 text-slate-400 hover:bg-slate-800'}`}>
+                    {['PDF','JSON','音声','出力'][n-1]}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="flex items-center gap-4">
+               <label className="flex items-center gap-2 cursor-pointer group">
+                 <div className="relative inline-block w-10 align-middle select-none">
+                   <input type="checkbox" checked={devMode} onChange={e=>setDevMode(e.target.checked)} className="toggle-checkbox absolute block w-5 h-5 rounded-full bg-white border-4 appearance-none cursor-pointer border-slate-600 transition-all duration-300"/>
+                   <label className={`toggle-label block overflow-hidden h-5 rounded-full cursor-pointer transition-colors duration-300 ${devMode ? 'bg-gradient-to-r from-emerald-400 to-emerald-600' : 'bg-slate-800'}`}></label>
+                 </div>
+                 <span className="text-xs font-bold text-slate-400 group-hover:text-white transition-colors">Dev Mode</span>
+               </label>
+               <input type="password" placeholder="Gemini API Key" value={localApiKey} onChange={e=>setLocalApiKey(e.target.value)} disabled={devMode} 
+                 className="bg-slate-950/50 border border-slate-700 rounded-lg px-3 py-1.5 text-xs w-48 focus:border-fuchsia-500 focus:outline-none focus:ring-1 focus:ring-fuchsia-500/50 transition-all text-fuchsia-100 placeholder-slate-600"/>
+            </div>
+          </header>
+
+          <div className="flex-1 flex overflow-hidden">
+            <div className="bg-slate-900/40 backdrop-blur-sm overflow-y-auto border-r border-slate-700/50 flex flex-col" style={{width: `${leftPanelWidth}%`}}>
+              <div className="p-6 space-y-6">
+                {step === 1 && (
+                  <div className={`glass-panel p-10 rounded-2xl border-2 border-dashed transition-all duration-300 text-center flex flex-col items-center justify-center gap-4 ${dragActive ? 'drag-active' : 'border-slate-600 hover:border-fuchsia-500/50'}`}
+                    onDragEnter={e=>{e.preventDefault(); e.stopPropagation(); setDragActive(true);}} onDragLeave={e=>{e.preventDefault(); e.stopPropagation(); setDragActive(false);}} onDragOver={e=>{e.preventDefault(); e.stopPropagation(); setDragActive(true);}} onDrop={handleDrop}
+                  >
+                    <div className="text-6xl mb-2 animate-bounce">📄</div>
+                    <div className="space-y-1">
+                      <h2 className="text-2xl font-bold text-white">PDFをドロップ</h2>
+                      <p className="text-xs text-slate-400">または下のボタンから選択</p>
+                    </div>
+                    <input type="file" accept="application/pdf" onChange={async (e)=>{
+                      if(e.target.files[0]) {
+                        setStatus("PDFレンダリング中...");
+                        try { 
+                            setSlides(await renderSlidesFromPdf(e.target.files[0])); 
+                            setStep(2); setStatus(""); 
+                            toast("PDF読込完了", "success"); 
+                        } 
+                        catch(err) { toast(err.message, "error"); setStatus("エラー"); }
+                      }
+                    }} className="hidden" id="pdf-upload"/>
+                    <label htmlFor="pdf-upload" className="bg-white text-slate-900 hover:bg-fuchsia-50 px-8 py-3 rounded-full font-bold cursor-pointer shadow-[0_0_15px_rgba(255,255,255,0.3)] transition-transform hover:scale-105 active:scale-95">ファイルを選択</label>
+                  </div>
+                )}
+
+                {step === 2 && (
+                  <div className="glass-panel p-6 rounded-2xl border-slate-700 animate-fade-in">
+                    <h2 className="text-lg font-bold mb-4 text-white flex items-center gap-2"><span className="text-fuchsia-400">📜</span> JSONスクリプト適用</h2>
+                    <input type="file" accept=".json" onChange={async e=>{if(e.target.files[0]) applyJsonString(await e.target.files[0].text());}} className="mb-6 block w-full text-xs text-slate-400 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-xs file:font-bold file:bg-slate-800 file:text-fuchsia-400 hover:file:bg-slate-700 cursor-pointer"/>
+                    <div className="flex items-center my-4"><div className="flex-grow border-t border-slate-700"></div><span className="mx-4 text-[10px] text-slate-500 uppercase tracking-widest">OR PASTE</span><div className="flex-grow border-t border-slate-700"></div></div>
+                    <textarea value={jsonText} onChange={e => setJsonText(e.target.value)} placeholder='{"slides": [{"slide": 1, "script": "..."}]}' 
+                      className="w-full h-40 bg-slate-950/50 border border-slate-700 rounded-xl p-4 text-xs font-mono text-fuchsia-100 focus:border-fuchsia-500 focus:outline-none focus:ring-1 focus:ring-fuchsia-500/30 transition-all"></textarea>
+                    <div className="flex gap-3 justify-end mt-6">
+                      <button onClick={()=>setStep(3)} className="text-slate-500 text-xs hover:text-white px-4 py-2 transition-colors">スキップ</button>
+                      <button onClick={() => applyJsonString(jsonText)} disabled={!jsonText.trim()} className="bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white px-6 py-2 rounded-lg font-bold text-xs shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed">適用して次へ</button>
+                    </div>
+                  </div>
+                )}
+
+                {step === 3 && (
+                  <div className="space-y-4">
+                    <div className="glass-panel p-5 rounded-2xl border-slate-700 sticky top-0 z-10 shadow-2xl">
+                        <div className="flex justify-between items-center mb-4">
+                          <h3 className="font-bold text-lg text-white flex items-center gap-2"><span className="text-cyan-400">⚡</span> 音声ストック ({slides.length}枚)</h3>
+                          <div className="flex gap-2">
+                             <button onClick={()=>{audioStock.clear(); setFullBuffer(null); setEditorIndividualBuffers(new Map()); toast("クリアしました","info"); setStatus("");}} className="text-[10px] text-slate-400 hover:text-red-400 border border-slate-700 hover:border-red-900/50 px-3 py-1.5 rounded-lg transition-all flex items-center gap-1">クリア</button>
+                             <button onClick={()=>setStep(4)} className="bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-400 hover:to-blue-400 text-white px-5 py-1.5 rounded-lg font-bold text-xs shadow-[0_0_10px_rgba(6,182,212,0.4)] transform active:scale-95 transition-all">次へ &rarr;</button>
+                          </div>
+                        </div>
+                        <div className="bg-slate-900/80 p-4 rounded-xl border border-indigo-500/20 mb-2 relative overflow-hidden group">
+                          <div className="grid grid-cols-3 gap-2 mb-4">
+                             {['Kore','Fenrir','Puck'].map(v=><button key={v} onClick={()=>setVoiceName(v)} className={`text-[10px] py-1.5 rounded-md border transition-all ${voiceName===v?'bg-indigo-600 text-white border-indigo-400 shadow-[0_0_8px_rgba(99,102,241,0.5)]':'bg-slate-800 text-slate-400 border-slate-700 hover:bg-slate-700'}`}>{v}</button>)}
+                          </div>
+                          <button onClick={generateStockAudioBulk} disabled={isBusy} className="w-full bg-gradient-to-r from-fuchsia-600 to-purple-600 hover:from-fuchsia-500 hover:to-purple-500 text-white font-bold py-3 rounded-lg text-sm shadow-lg flex items-center justify-center gap-2 transition-all transform active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed">
+                            ✂️ 音声を一括生成 (手動エディタを開く)
+                          </button>
+                          <p className="text-[9px] text-slate-400 mt-2 text-center">※ API使用1回 / 生成後に手動で分割ポイントを微調整できます</p>
+                          
+                          {fullBuffer && !showManualEditor && (
+                            <button onClick={()=>setShowManualEditor(true)} className="w-full mt-3 bg-slate-800 hover:bg-slate-700 text-fuchsia-400 font-bold py-2 rounded-lg text-xs border border-fuchsia-500/30 transition-colors">
+                                ✂️ エディタを再表示
+                            </button>
+                          )}
+                        </div>
+                    </div>
+                    
+                    <div className="space-y-3 pb-20">
+                      {slides.map((s, i) => {
+                        const hasStock = audioStock.has(i);
+                        return (
+                          <div key={i} onClick={()=>setActiveSlideIdx(i)} className={`glass-panel p-3 rounded-xl border transition-all cursor-pointer flex gap-4 group ${activeSlideIdx === i ? 'border-fuchsia-500 bg-fuchsia-900/10' : 'border-slate-700/50 hover:border-slate-600 hover:bg-slate-800/50'}`}>
+                            <div className="w-24 shrink-0 aspect-video bg-black rounded-lg overflow-hidden border border-slate-700 relative shadow-lg mt-1">
+                                <img src={s.imageDataUrl} className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity"/>
+                                <div className="absolute top-0 left-0 bg-black/60 text-[9px] px-1.5 py-0.5 text-white font-mono backdrop-blur-sm border-b border-r border-slate-700/50 rounded-br-md">#{i+1}</div>
+                                {hasStock && <div className="absolute bottom-1 right-1 w-2 h-2 rounded-full bg-emerald-500 shadow-[0_0_5px_#10b981]"></div>}
+                            </div>
+                            <div className="flex-1 min-w-0 flex flex-col gap-2">
+                               <textarea value={s.script} onChange={e=>{ const ns = [...slides]; ns[i].script = e.target.value; setSlides(ns); }} onClick={e=>e.stopPropagation()} 
+                                 className="w-full h-24 bg-slate-950/30 border border-slate-700/50 rounded-lg p-3 text-xs text-slate-300 focus:text-white focus:border-fuchsia-500/50 focus:outline-none resize-y transition-colors leading-relaxed"/>
+                               <div className="flex justify-end gap-2 items-center">
+                                 {hasStock ? <span className="text-[10px] text-emerald-400 font-bold bg-emerald-900/20 px-2 py-0.5 rounded border border-emerald-900/50">OK</span> : <span className="text-[10px] text-slate-500">Empty</span>}
+                                 <button onClick={e=>{e.stopPropagation(); generateSingleStock(i);}} className="text-[9px] bg-slate-800 hover:bg-slate-700 text-slate-300 px-3 py-1 rounded border border-slate-600 transition-colors">更新 (単体)</button>
+                                 <button onClick={e=>{e.stopPropagation(); stopAudio();}} className="text-[10px] bg-red-900/20 hover:bg-red-900/40 text-red-300 px-3 py-1 rounded border border-red-900/30 transition-colors">■</button>
+                                 <button onClick={e=>{e.stopPropagation(); playStockAudio(i);}} className="text-[10px] bg-cyan-900/20 hover:bg-cyan-900/40 text-cyan-300 px-3 py-1 rounded border border-cyan-900/30 transition-colors font-bold">▶</button>
+                               </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+                
+                {step === 4 && (
+                   <div className="glass-panel p-6 rounded-2xl border-slate-700 space-y-8 animate-fade-in">
+                      <div className="flex items-center justify-between mb-2">
+                        <button onClick={()=>setStep(3)} className="text-xs text-slate-400 hover:text-white transition-colors flex items-center gap-1">← Back</button>
+                        <h3 className="font-bold text-xl text-white">Export</h3>
+                      </div>
+                      
+                      <div>
+                        <label className="text-xs font-bold text-slate-400 mb-3 block uppercase tracking-wider">Mode Selection</label>
+                        <div className="grid grid-cols-2 gap-4">
+                          <button onClick={()=>setUseBrowserTTS(true)} className={`p-4 rounded-xl border text-left relative transition-all duration-300 ${useBrowserTTS ? 'bg-emerald-900/20 border-emerald-500 shadow-[0_0_15px_rgba(16,185,129,0.2)]' : 'bg-slate-800/30 border-slate-700 hover:bg-slate-800/50'}`}>
+                             <div className="text-2xl mb-2">🆓</div>
+                             <div className={`font-bold mb-1 ${useBrowserTTS ? 'text-emerald-400' : 'text-slate-300'}`}>Browser</div>
+                             <div className="text-[10px] text-slate-500">無料 / 画面録画</div>
+                             {useBrowserTTS && <div className="absolute top-3 right-3 w-2 h-2 rounded-full bg-emerald-500 shadow-[0_0_5px_#10b981]"></div>}
+                          </button>
+                          <button onClick={()=>setUseBrowserTTS(false)} className={`p-4 rounded-xl border text-left relative transition-all duration-300 ${!useBrowserTTS ? 'bg-emerald-900/20 border-emerald-500 shadow-[0_0_15px_rgba(16,185,129,0.2)]' : 'bg-slate-800/30 border-slate-700 hover:bg-slate-800/50'}`}>
+                             <div className="text-2xl mb-2">💎</div>
+                             <div className={`font-bold mb-1 ${!useBrowserTTS ? 'text-emerald-400' : 'text-slate-300'}`}>Studio Master</div>
+                             <div className="text-[10px] text-slate-400">高品質AI / 手動カット調整済</div>
+                             {!useBrowserTTS && <div className="absolute top-3 right-3 w-2 h-2 rounded-full bg-emerald-500 shadow-[0_0_5px_#10b981]"></div>}
+                          </button>
+                        </div>
+                      </div>
+
+                      {!useBrowserTTS && (
+                        <div className="animate-fade-in">
+                          <label className="text-xs font-bold text-slate-400 mb-3 block uppercase tracking-wider flex justify-between items-center">
+                              <span>Output Format</span>
+                              <span className="text-[9px] text-emerald-400 bg-emerald-900/20 px-2 py-0.5 rounded border border-emerald-900/50">Vercel: AAC完全対応</span>
+                          </label>
+                          <div className="grid grid-cols-1 gap-2 mb-3">
+                             {availableFormats.map((f, i) => (
+                                 <button 
+                                   key={i} 
+                                   onClick={() => setExportFormat(f)}
+                                   className={`p-3 rounded-lg border text-left transition-all ${exportFormat.mime === f.mime && exportFormat.label === f.label ? 'bg-fuchsia-600/20 border-fuchsia-500 shadow-[0_0_10px_rgba(217,70,239,0.3)]' : 'bg-slate-800/30 border-slate-700 text-slate-400 hover:bg-slate-800'}`}
+                                 >
+                                    <div className={`font-bold text-xs ${exportFormat.mime === f.mime && exportFormat.label === f.label ? 'text-white' : 'text-slate-300'}`}>
+                                        {f.label} 
+                                        <span className="font-normal opacity-50 ml-2 text-[10px]">{f.ext.toUpperCase()}</span>
+                                    </div>
+                                 </button>
+                             ))}
+                          </div>
+                          <div className="text-[10px] text-slate-400 bg-black/40 p-3 rounded-lg border border-slate-700/50 leading-relaxed">
+                              Vercel環境では、ブラウザ内で完結する<strong className="text-emerald-400">完全自動のAACオーディオ変換エンジン(FFmpeg)</strong>がフルパワーで動作します。「究極MP4」を選ぶと、外部ツール不要で納品可能なMP4が直接ダウンロードできます。
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="bg-slate-950/50 p-6 rounded-xl border border-slate-800 text-center relative overflow-hidden">
+                          <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-fuchsia-500 to-transparent opacity-50"></div>
+                          <div className="text-[10px] text-slate-500 uppercase tracking-widest mb-2">Current Stock</div>
+                          <div className="text-4xl font-black text-white mb-1 flex items-baseline justify-center gap-1">
+                             <span className={audioStock.size === slides.length ? "text-emerald-400 drop-shadow-[0_0_8px_rgba(52,211,153,0.5)]" : "text-amber-400"}>{audioStock.size}</span> 
+                             <span className="text-lg text-slate-600 font-normal">/ {slides.length}</span>
+                          </div>
+                          {audioStock.size < slides.length && !useBrowserTTS && <p className="text-[10px] text-amber-500 mt-2 bg-amber-900/20 inline-block px-3 py-1 rounded border border-amber-900/50">⚠️ 音声が不足しています</p>}
+                          {audioStock.size === slides.length && !useBrowserTTS && <p className="text-[10px] text-emerald-400 mt-2 bg-emerald-900/20 inline-block px-3 py-1 rounded border border-emerald-900/50">✨ Ready to Build</p>}
+                      </div>
+
+                      <div>
+                        <div className="flex justify-between items-center mb-3">
+                           <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Subtitles</label>
+                           <div className="flex bg-slate-900 rounded-lg p-1 border border-slate-700">
+                             <button onClick={()=>setShowSubtitle(true)} className={`px-4 py-1 rounded-md text-[10px] font-bold transition-all ${showSubtitle?'bg-fuchsia-600 text-white shadow-md':'text-slate-500 hover:text-slate-300'}`}>ON</button>
+                             <button onClick={()=>setShowSubtitle(false)} className={`px-4 py-1 rounded-md text-[10px] font-bold transition-all ${!showSubtitle?'bg-slate-700 text-white shadow-md':'text-slate-500 hover:text-slate-300'}`}>OFF</button>
+                           </div>
+                        </div>
+                        <p className="text-[10px] text-slate-500">※ OFFにするとスライドが全画面表示になります</p>
+                      </div>
+
+                      <div className="pt-6 border-t border-slate-700/50">
+                        <button onClick={exportVideoFromStock} disabled={isBusy} 
+                          className={`w-full py-4 rounded-xl font-bold text-lg shadow-xl flex justify-center items-center gap-3 transition-all duration-300 transform active:scale-[0.98]
+                          ${isBusy ? 'bg-slate-800 text-slate-500 cursor-not-allowed' : 'bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 text-white hover:shadow-[0_0_20px_rgba(79,70,229,0.4)]'}`}>
+                          {isBusy ? <div className="spinner border-white/50 border-l-white"></div> : <span>🚀 動画書き出し開始 ({exportFormat.label})</span>}
+                        </button>
+                        <p className="text-[10px] text-center mt-3 text-emerald-400/80">✨ Background Worker稼働中: 別のタブを開いていても出力は止まりません</p>
+                      </div>
+                   </div>
+                )}
+              </div>
+            </div>
+
+            <div 
+              className={`w-1 z-20 cursor-col-resize transition-colors ${isDraggingSplitter ? 'bg-fuchsia-500 opacity-100' : 'bg-slate-800 opacity-50 hover:bg-fuchsia-500 hover:opacity-100'}`}
+              onMouseDown={(e) => { e.preventDefault(); setIsDraggingSplitter(true); }}
+            />
+
+            {/* Right Panel: Preview */}
+            <div className="flex-1 bg-black flex flex-col relative canvas-container" ref={containerRef}>
+              <div className="flex-1 flex items-center justify-center p-8">
+                 <div className="relative shadow-2xl border border-slate-800 bg-black rounded-sm overflow-hidden ring-1 ring-white/5">
+                    <canvas ref={canvasRef} width={1920} height={1080} className="max-w-full max-h-full object-contain"/>
+                 </div>
+              </div>
+              <div className="bg-slate-900/80 backdrop-blur border-t border-slate-800 p-3 flex justify-between items-center text-xs text-slate-400">
+                 <div className="font-mono">{status || "Ready"}</div>
+                 <div className="font-mono">Slide: <span className="text-white">{activeSlideIdx + 1}</span> <span className="opacity-50">/</span> {slides.length || 0}</div>
+              </div>
+              
+              {isBusy && (
+                <div className="absolute inset-0 bg-black/80 flex flex-col items-center justify-center z-50 backdrop-blur-md">
+                  <div className="flex gap-2 mb-6">
+                      <div className="wave-bar h-8 w-2 bg-fuchsia-500"></div>
+                      <div className="wave-bar h-12 w-2 bg-purple-500" style={{animationDelay:'0.1s'}}></div>
+                      <div className="wave-bar h-8 w-2 bg-indigo-500" style={{animationDelay:'0.2s'}}></div>
+                  </div>
+                  <div className="text-2xl font-black text-transparent bg-clip-text bg-gradient-to-r from-fuchsia-400 to-cyan-400 animate-pulse mb-2">{status}</div>
+                  <div className="w-1/2 h-1 bg-slate-800 rounded-full mt-4 overflow-hidden relative">
+                     <div className="h-full bg-fuchsia-500 progress-bar absolute top-0 left-0" style={{width: `${progress}%`}}></div>
+                  </div>
+                  {useBrowserTTS && <div className="mt-8 bg-emerald-900/20 border border-emerald-500/30 p-6 rounded-xl text-emerald-200 text-center backdrop-blur"><p className="font-bold text-lg mb-1">Recording...</p><p className="text-xs opacity-70">音声が流れます / ミュートにしないでください</p></div>}
+                </div>
+              )}
+            </div>
+            
+            {/* ★ Manual Cut Editor Modal ★ */}
+            {showManualEditor && fullBuffer && (
+              <div className="absolute inset-0 z-50 bg-black/95 flex flex-col p-6 animate-fade-in backdrop-blur-xl">
+                 <div className="flex justify-between items-center mb-6 border-b border-slate-800 pb-4">
+                    <div>
+                        <h2 className="text-2xl font-bold text-white flex items-center gap-3">
+                            <span className="text-fuchsia-500">✂️</span> 手動カット調整
+                        </h2>
+                        <p className="text-xs text-slate-400 mt-1">AIが予測したカット位置を聞いて確認し、ズレていれば±ボタンで微調整してください。<br/>時間を延長した場合、<b>後続のスライドも自動で後ろ倒し</b>になります。</p>
+                    </div>
+                    <div className="flex gap-3">
+                        <button onClick={()=>{pauseEditorSegment(); setShowManualEditor(false);}} className="px-4 py-2 rounded-lg bg-slate-800 text-white hover:bg-slate-700 transition-colors shadow-md">キャンセル</button>
+                        <button onClick={applyManualSplit} className="px-6 py-2 rounded-lg bg-gradient-to-r from-fuchsia-600 to-purple-600 text-white font-bold hover:from-fuchsia-500 hover:to-purple-500 transition-all shadow-[0_0_15px_rgba(219,39,119,0.4)]">この設定で分割を確定</button>
+                    </div>
+                 </div>
+
+                 <div className="flex-1 overflow-y-auto space-y-4 pr-2">
+                    {slides.map((s, i) => {
+                        const startSec = i === 0 ? 0 : manualSplitTimes[i-1];
+                        const endSec = i === slides.length - 1 ? (manualSplitTimes.length > 0 ? Math.max(fullBuffer.duration, manualSplitTimes[manualSplitTimes.length - 1] + 3.0) : fullBuffer.duration) : manualSplitTimes[i];
+                        const isIndividuallyGenerated = editorIndividualBuffers.has(i);
+                        const duration = isIndividuallyGenerated ? editorIndividualBuffers.get(i).duration : Math.max(0.1, endSec - startSec);
+                        
+                        const isThisActive = editorActiveIdx === i;
+                        const isThisPlaying = isThisActive && editorIsPlaying;
+
+                        return (
+                           <div key={i} className={`glass-panel p-5 rounded-xl flex items-stretch gap-5 border transition-colors ${isThisActive ? 'border-fuchsia-500 bg-fuchsia-900/10' : 'border-slate-700 hover:border-slate-500 bg-slate-900/50'}`}>
+                               <div className="w-36 shrink-0 aspect-video bg-black rounded-lg overflow-hidden relative border border-slate-800 shadow-md mt-1">
+                                   <img src={s.imageDataUrl} className="w-full h-full object-cover opacity-80"/>
+                                   <div className="absolute top-0 left-0 bg-black/80 text-[10px] px-2 py-1 text-white font-mono rounded-br">Slide {i+1}</div>
+                                   {isIndividuallyGenerated && <span className="text-[9px] bg-fuchsia-600 text-white px-1.5 py-0.5 rounded absolute bottom-1 right-1 shadow-md">個別版</span>}
+                               </div>
+                               
+                               <div className="flex-1 flex flex-col gap-3 justify-between">
+                                   
+                                   <div className="flex gap-3">
+                                      <textarea 
+                                        value={s.script} 
+                                        onChange={(e)=>{ const ns = [...slides]; ns[i].script = e.target.value; setSlides(ns); }} 
+                                        onClick={(e)=>e.stopPropagation()} 
+                                        className="flex-1 h-24 bg-black/40 border border-slate-600 rounded-lg p-3 text-xs text-slate-200 focus:text-white focus:border-fuchsia-500/80 focus:bg-slate-900 outline-none resize-y transition-all leading-relaxed shadow-inner"
+                                      />
+                                      <button 
+                                        onClick={()=>regenerateSingleInEditor(i)} 
+                                        title="テキストを修正してこのスライドだけ音声を再生成します" 
+                                        className="w-20 shrink-0 bg-slate-800 hover:bg-slate-700 text-fuchsia-400 font-bold rounded-lg text-[10px] border border-slate-600 hover:border-fuchsia-500/50 transition-colors flex flex-col items-center justify-center gap-1 shadow-md"
+                                      >
+                                          <span className="text-xl">🔄</span>
+                                          <span>再生成</span>
+                                      </button>
+                                   </div>
+
+                                   <div className="flex flex-col gap-2 mt-1">
+                                       {!isIndividuallyGenerated && i < slides.length - 1 && (
+                                           <div className="flex items-center justify-end gap-2 text-xs text-slate-300">
+                                               <span className="text-[10px] text-fuchsia-400 font-bold mr-2">↓スライドの長さを調整 (後ろ倒し)</span>
+                                               <button onClick={()=>adjustSplitTime(i, -0.5)} className="px-2 py-1 bg-slate-800 rounded hover:bg-slate-700 transition-colors shadow-sm">-0.5s</button>
+                                               <button onClick={()=>adjustSplitTime(i, -0.1)} className="px-2 py-1 bg-slate-800 rounded hover:bg-slate-700 transition-colors shadow-sm">-0.1s</button>
+                                               
+                                               {editingSplitIdx === i ? (
+                                                   <input 
+                                                       type="number" step="0.01" 
+                                                       defaultValue={(manualSplitTimes[i] || 0).toFixed(2)} 
+                                                       autoFocus
+                                                       onBlur={(e) => { handleSplitTimeChange(i, e.target.value); setEditingSplitIdx(-1); }}
+                                                       onKeyDown={(e) => {
+                                                           if (e.key === 'Enter') { handleSplitTimeChange(i, e.target.value); setEditingSplitIdx(-1); }
+                                                           if (e.key === 'Escape') setEditingSplitIdx(-1);
+                                                       }}
+                                                       className="w-16 bg-black text-center border border-fuchsia-500 rounded py-1 text-xs text-white font-mono outline-none shadow-inner"
+                                                   />
+                                               ) : (
+                                                   <div 
+                                                       onDoubleClick={() => setEditingSplitIdx(i)}
+                                                       title="ダブルクリックで直接時間を入力"
+                                                       className="w-16 text-center py-1 text-xs text-white font-mono cursor-pointer border border-slate-700 bg-black rounded hover:border-fuchsia-400 transition-colors select-none"
+                                                   >
+                                                       {(manualSplitTimes[i] || 0).toFixed(2)}
+                                                   </div>
+                                               )}
+
+                                               <button onClick={()=>adjustSplitTime(i, 0.1)} className="px-2 py-1 bg-slate-800 rounded hover:bg-slate-700 transition-colors shadow-sm">+0.1s</button>
+                                               <button onClick={()=>adjustSplitTime(i, 0.5)} className="px-2 py-1 bg-slate-800 rounded hover:bg-slate-700 transition-colors shadow-sm">+0.5s</button>
+                                           </div>
+                                       )}
+                                       
+                                       <div className={`flex items-center gap-4 p-2 rounded-xl border w-full transition-colors shadow-sm ${isThisActive ? 'bg-fuchsia-950/30 border-fuchsia-500/50' : 'bg-black/40 border-slate-700'}`}>
+                                           <button 
+                                               onClick={() => togglePlayPause(i, startSec, endSec, duration)}
+                                               className={`w-10 h-10 shrink-0 rounded-full flex items-center justify-center transition-all shadow-md transform hover:scale-105 active:scale-95 ${isThisPlaying ? 'bg-amber-500/20 text-amber-400 border border-amber-500/50 hover:bg-amber-500/40 text-lg' : 'bg-emerald-600/20 text-emerald-400 border border-emerald-500/50 hover:bg-emerald-600/40 text-lg'}`}
+                                           >
+                                               {isThisPlaying ? '⏸️' : '▶'}
+                                           </button>
+                                           
+                                           <input 
+                                               type="range" min="0" max="1" step="0.001"
+                                               value={isThisActive ? editorSeekRatio : 0}
+                                               onMouseDown={() => { isSeekingRef.current = true; }}
+                                               onTouchStart={() => { isSeekingRef.current = true; }}
+                                               onChange={(e) => handleSeekChange(i, parseFloat(e.target.value))}
+                                               onMouseUp={(e) => handleSeekEnd(i, startSec, endSec, duration, parseFloat(e.target.value))}
+                                               onTouchEnd={(e) => handleSeekEnd(i, startSec, endSec, duration, parseFloat(e.target.value))}
+                                               className="flex-1 custom-range"
+                                           />
+                                           
+                                           <span className="text-xs text-slate-400 font-mono w-24 text-right tracking-tighter bg-slate-900/50 px-2 py-1 rounded-md border border-slate-800">
+                                               {isThisActive ? (editorSeekRatio * duration).toFixed(1) : "0.0"} / {duration.toFixed(1)}s
+                                           </span>
+                                       </div>
+                                   </div>
+                               </div>
+                           </div>
+                        )
+                    })}
+                 </div>
+              </div>
+            )}
+            
+          </div>
+        </div>
+      );
+    }
+
+    function App() {
+        return (
+            <ToastProvider>
+                <MainApp />
+            </ToastProvider>
+        );
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+</body>
+</html>
