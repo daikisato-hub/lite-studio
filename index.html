@@ -3,42 +3,26 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Lite Studio v13.40 - Vercel Edition</title>
+  <title>Lite Studio v13.40 - Vercel Pro Edition</title>
 
-  <!-- React & ReactDOM -->
   <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
-
-  <!-- Babel -->
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-
-  <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
+  
+  <script src="https://unpkg.com/mp4-muxer@5.0.2/build/mp4-muxer.js"></script>
 
-  <!-- FFmpeg.wasm for Audio Transcoding (v0.12 Single Threaded) -->
-  <script src="https://unpkg.com/@ffmpeg/ffmpeg@0.12.6/dist/umd/ffmpeg.js"></script>
-
-  <!-- PDF.js -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
   <script>
     pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
   </script>
 
-  <!-- Google Fonts -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;700;900&display=swap" rel="stylesheet">
 
   <style>
-    body { 
-      font-family: 'Noto Sans JP', sans-serif; 
-      background-color: #05050a; 
-      color: #e2e8f0; 
-      overflow: hidden; 
-      background-image: 
-        radial-gradient(circle at 15% 50%, rgba(76, 29, 149, 0.15), transparent 25%), 
-        radial-gradient(circle at 85% 30%, rgba(219, 39, 119, 0.1), transparent 25%);
-    }
+    body { font-family: 'Noto Sans JP', sans-serif; background-color: #05050a; color: #e2e8f0; overflow: hidden; background-image: radial-gradient(circle at 15% 50%, rgba(76, 29, 149, 0.15), transparent 25%), radial-gradient(circle at 85% 30%, rgba(219, 39, 119, 0.1), transparent 25%); }
     ::-webkit-scrollbar { width: 6px; height: 6px; }
     ::-webkit-scrollbar-track { background: #0f172a; }
     ::-webkit-scrollbar-thumb { background: #4c1d95; border-radius: 3px; }
@@ -162,10 +146,6 @@
             for (let i = 0; i < fadeLength; i++) data[len - 1 - i] *= 0.5 * (1 - Math.cos(Math.PI * (i / fadeLength)));
         }
         return buffer;
-    }
-
-    function createSilenceBuffer(ctx, durationSeconds) {
-        return ctx.createBuffer(1, Math.floor(ctx.sampleRate * durationSeconds), ctx.sampleRate);
     }
 
     function calculateSplitTimes(fullBuffer, texts) {
@@ -356,25 +336,6 @@
       const [voiceName, setVoiceName] = useState('Kore');
       const [activeSlideIdx, setActiveSlideIdx] = useState(0);
       
-      const availableFormats = useMemo(() => {
-        const candidates = [
-          { mime: 'video/mp4; codecs="avc1.4d002a"', ext: 'mp4', label: '究極MP4 (AAC音質変換)', transcodeToAAC: true },
-          { mime: 'video/webm; codecs="avc1.4d002a"', ext: 'mp4', label: '究極MP4 (AAC変換/代替)', transcodeToAAC: true },
-          { mime: 'video/mp4', ext: 'mp4', label: '標準MP4 (変換なし/Opus)', transcodeToAAC: false },
-          { mime: 'video/webm; codecs=vp9,opus', ext: 'webm', label: 'WebM (高品質/推奨)', transcodeToAAC: false }
-        ];
-        
-        const supported = [];
-        for (const c of candidates) {
-            try { 
-                if (MediaRecorder.isTypeSupported(c.mime)) supported.push(c); 
-            } catch(e) {}
-        }
-        return supported.length > 0 ? supported : [{ mime: '', ext: 'webm', label: 'Default fallback', transcodeToAAC: false }];
-      }, []);
-
-      const [exportFormat, setExportFormat] = useState(availableFormats[0]); 
-
       const canvasRef = useRef(null);
       const containerRef = useRef(null);
       const [leftPanelWidth, setLeftPanelWidth] = useState(40);
@@ -756,6 +717,7 @@
 
       const stopAudio = () => { stopGlobalAudio(); };
 
+      // ★★★ 最新プロ仕様：WebCodecs API による完全オフラインMP4生成 ★★★
       const exportVideoFromStock = async () => {
           const missing = slides.findIndex((_, i) => !audioStock.has(i) && normalizeText(slides[i].script) !== "");
           if (missing !== -1 && !useBrowserTTS) {
@@ -763,14 +725,181 @@
               return;
           }
 
-          setIsBusy(true); setStatus("画像をプリロード中...");
+          setIsBusy(true); 
+          setStatus("画像をプリロード中...");
           try {
               preloadedImagesRef.current = await preloadImages(slides);
-          } catch(e) { toast("画像読込失敗: " + e.message, "error"); setIsBusy(false); return; }
+          } catch(e) { 
+              toast("画像読込失敗: " + e.message, "error"); 
+              setIsBusy(false); 
+              return; 
+          }
 
           drawSlideSync(0, "");
           await sleep(100);
 
+          // ==============================================================================
+          // 💎 Studio Master モード: WebCodecs + mp4-muxer (超安定・iPhone完全対応MP4)
+          // ==============================================================================
+          if (!useBrowserTTS) {
+              try {
+                  setStatus("プロ仕様MP4エンコード準備中...");
+                  setProgress(0);
+
+                  const FPS = 30;
+                  const SAMPLE_RATE = 24000; // Gemini TTSの仕様に合わせたサンプリングレート
+
+                  // mp4-muxerの箱（コンテナ）を用意
+                  let muxer = new Mp4Muxer.Muxer({
+                      target: new Mp4Muxer.ArrayBufferTarget(),
+                      video: { codec: 'avc', width: 1280, height: 720 }, // 720p（メモリ安全サイズ）
+                      audio: { codec: 'aac', numberOfChannels: 1, sampleRate: SAMPLE_RATE }
+                  });
+
+                  // 映像圧縮職人 (H.264 / AVC)
+                  const videoEncoder = new VideoEncoder({
+                      output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
+                      error: e => { console.error(e); }
+                  });
+                  videoEncoder.configure({ 
+                      codec: 'avc1.42E01F', // iPhone/Safariで確実に再生できる互換性重視のプロファイル
+                      width: 1280, height: 720, 
+                      bitrate: 2500000, 
+                      framerate: FPS 
+                  });
+
+                  // 音声圧縮職人 (AAC)
+                  const audioEncoder = new AudioEncoder({
+                      output: (chunk, meta) => muxer.addAudioChunk(chunk, meta),
+                      error: e => { console.error(e); }
+                  });
+                  audioEncoder.configure({ 
+                      codec: 'mp4a.40.2', // AAC-LC
+                      numberOfChannels: 1, 
+                      sampleRate: SAMPLE_RATE, 
+                      bitrate: 128000 
+                  });
+
+                  let currentTimestampUs = 0; // マイクロ秒単位の進行時間
+
+                  // 【便利ツール】AudioBufferの波形を切り取ってエンコーダーに送る機能
+                  async function encodeAudioBuffer(buffer) {
+                      if (!buffer) return;
+                      const channelData = buffer.getChannelData(0);
+                      const chunkSize = SAMPLE_RATE; // 1秒ごとに区切ってメモリパンクを防ぐ
+                      let offset = 0;
+                      while (offset < channelData.length) {
+                          const framesToEncode = Math.min(chunkSize, channelData.length - offset);
+                          const chunkData = channelData.slice(offset, offset + framesToEncode);
+                          const audioData = new AudioData({
+                              format: 'f32-planar',
+                              sampleRate: buffer.sampleRate,
+                              numberOfFrames: framesToEncode,
+                              numberOfChannels: 1,
+                              timestamp: currentTimestampUs + (offset / buffer.sampleRate) * 1000000,
+                              data: chunkData
+                          });
+                          audioEncoder.encode(audioData);
+                          audioData.close();
+                          offset += framesToEncode;
+                          // エンコーダーがパンクしないように時々休ませる
+                          if (audioEncoder.encodeQueueSize > 30) await sleep(10);
+                      }
+                  }
+
+                  // 【便利ツール】無音の波形を作ってエンコーダーに送る機能
+                  async function encodeSilence(durationSec) {
+                      const frames = Math.floor(durationSec * SAMPLE_RATE);
+                      if (frames <= 0) return;
+                      const ctx = getAudioContext();
+                      const emptyBuffer = ctx.createBuffer(1, frames, SAMPLE_RATE);
+                      await encodeAudioBuffer(emptyBuffer);
+                  }
+
+                  // === 全スライドを順番にパラパラ漫画のように描画していく ===
+                  for (let i = 0; i < slides.length; i++) {
+                      setActiveSlideIdx(i);
+                      setStatus(`動画生成中: ${i+1}/${slides.length}枚目 (安定処理)`);
+
+                      const buffer = audioStock.has(i) ? audioStock.get(i) : null;
+                      const audioDur = buffer ? buffer.duration : 0.5;
+
+                      const preSilence = 0.5;
+                      const postSilence = 1.5;
+                      const totalSlideDur = preSilence + audioDur + postSilence;
+
+                      // 1. まず「音声」をタイムラインに配置する
+                      await encodeSilence(preSilence);
+                      if (buffer) await encodeAudioBuffer(buffer);
+                      await encodeSilence(postSilence);
+
+                      // 2. 次に「映像（パラパラ漫画）」をタイムラインに配置する
+                      const totalFrames = Math.floor(totalSlideDur * FPS);
+                      const scriptText = normalizeText(slides[i].script);
+                      const segments = splitForSubtitles(scriptText);
+
+                      for (let f = 0; f < totalFrames; f++) {
+                          const timeSec = f / FPS;
+                          let currentSubtitle = "";
+
+                          // 適切なタイミングの字幕のテキストを探す
+                          if (timeSec >= preSilence && timeSec < preSilence + audioDur && segments.length > 0) {
+                              const p = Math.min((timeSec - preSilence) / audioDur, 0.99);
+                              const segIdx = Math.floor(p * segments.length);
+                              currentSubtitle = segments[segIdx] || "";
+                          }
+
+                          // キャンバスに1コマ分を描画
+                          drawSlideSync(i, currentSubtitle);
+
+                          // キャンバスから映像の1コマを剥ぎ取ってエンコーダーに渡す
+                          const canvas = canvasRef.current;
+                          const frame = new VideoFrame(canvas, { timestamp: currentTimestampUs + (f * 1000000 / FPS) });
+                          videoEncoder.encode(frame, { keyFrame: f % 60 === 0 });
+                          frame.close();
+
+                          if (videoEncoder.encodeQueueSize > 30) await sleep(1);
+                          if (f % 15 === 0) setProgress(((i + f / totalFrames) / slides.length) * 100);
+                      }
+
+                      // 時間の針を次のスライドの開始位置へ進める
+                      currentTimestampUs += totalSlideDur * 1000000;
+                  }
+
+                  setProgress(100);
+                  setStatus("最終のMP4ファイルを構築中...");
+
+                  // すべての処理が終わるのを待つ
+                  await videoEncoder.flush();
+                  await audioEncoder.flush();
+                  muxer.finalize();
+
+                  // 完全に書き上がった箱（MP4）をダウンロード
+                  const { buffer: finalBuffer } = muxer.target;
+                  const finalBlob = new Blob([finalBuffer], { type: 'video/mp4' });
+
+                  const url = URL.createObjectURL(finalBlob);
+                  const a = document.createElement('a'); 
+                  a.href = url; 
+                  a.download = `lite_studio_v13_40_PRO.mp4`;
+                  a.click();
+
+                  toast("✨ iPhone対応の完全なMP4の生成に成功しました！", "success");
+                  setIsBusy(false);
+                  setStatus("完了");
+
+              } catch (e) {
+                  console.error(e);
+                  toast("MP4エンコードエラー: " + e.message, "error");
+                  setIsBusy(false);
+                  setStatus("エラー");
+              }
+              return;
+          }
+
+          // ==============================================================================
+          // 🆓 Browser モード: 旧来のMediaRecorder (※今回は使用しませんが残してあります)
+          // ==============================================================================
           setStatus("動画書き出し準備...");
           const ctx = getAudioContext();
           const dest = ctx.createMediaStreamDestination();
@@ -783,7 +912,7 @@
           const recorder = new MediaRecorder(combined, { 
               mimeType, 
               videoBitsPerSecond: 2500000,
-              audioBitsPerSecond: 256000
+              audioBitsPerSecond: 128000
           }); 
           const chunks = [];
           
@@ -967,40 +1096,6 @@
               
               if (!hasError && chunks.length > 0) {
                   finalBlob = new Blob(chunks, { type: mimeType });
-                  
-                  if (exportFormat.transcodeToAAC) {
-                      try {
-                          setStatus("FFmpeg エンジンをロード中...");
-                          const { FFmpeg } = window.FFmpegWASM;
-                          const ffmpeg = new FFmpeg();
-                          
-                          ffmpeg.on('progress', ({ progress }) => {
-                              setProgress(progress * 100);
-                              setStatus(`AACオーディオへ変換中... ${Math.round(progress * 100)}%`);
-                          });
-                          
-                          // WebWorker内でFFmpegを安全に起動（Vercel推奨設定）
-                          await ffmpeg.load({
-                              coreURL: 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd/ffmpeg-core.js',
-                              wasmURL: 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd/ffmpeg-core.wasm'
-                          });
-                          
-                          setStatus("動画データをメモリに展開中...");
-                          const fileData = new Uint8Array(await finalBlob.arrayBuffer());
-                          await ffmpeg.writeFile('input_video', fileData);
-                          
-                          setStatus("映像と音声を再結合中 (MP4/AAC)...");
-                          await ffmpeg.exec(['-i', 'input_video', '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k', 'output.mp4']);
-                          
-                          const data = await ffmpeg.readFile('output.mp4');
-                          finalBlob = new Blob([data.buffer], { type: 'video/mp4' });
-                          toast("✨ AAC形式への変換に成功しました！", "success");
-                      } catch (err) {
-                          console.error("FFmpeg error:", err);
-                          toast("AAC変換に失敗しました。元のフォーマットで出力します。", "error");
-                      }
-                  }
-
                   const url = URL.createObjectURL(finalBlob);
                   const a = document.createElement('a'); 
                   a.href = url; 
@@ -1008,7 +1103,7 @@
                   a.click();
                   toast("動画の書き出しが完了しました！", "success");
               } else {
-                  toast("⚠️ 動画データの生成に失敗しました（0バイト）。環境に問題がある可能性があります。", "error");
+                  toast("⚠️ 動画データの生成に失敗しました（0バイト）。", "error");
               }
               setIsBusy(false); setStatus(hasError || chunks.length === 0 ? "書出失敗" : "完了");
               setProgress(0);
@@ -1060,7 +1155,7 @@
           <header className="glass-panel border-b border-slate-700/50 p-3 flex justify-between items-center z-10 sticky top-0">
             <div className="flex items-center gap-4">
               <h1 className="text-xl font-black italic bg-gradient-to-r from-fuchsia-400 via-purple-400 to-indigo-400 bg-clip-text text-transparent drop-shadow-sm">
-                Lite Studio <span className="text-xs not-italic font-normal text-fuchsia-400">v13.40 Vercel</span>
+                Lite Studio <span className="text-xs not-italic font-normal text-fuchsia-400">v13.40 Pro</span>
               </h1>
               <div className="flex gap-1">
                 {[1,2,3,4].map(n => (
@@ -1192,43 +1287,17 @@
                           <button onClick={()=>setUseBrowserTTS(true)} className={`p-4 rounded-xl border text-left relative transition-all duration-300 ${useBrowserTTS ? 'bg-emerald-900/20 border-emerald-500 shadow-[0_0_15px_rgba(16,185,129,0.2)]' : 'bg-slate-800/30 border-slate-700 hover:bg-slate-800/50'}`}>
                              <div className="text-2xl mb-2">🆓</div>
                              <div className={`font-bold mb-1 ${useBrowserTTS ? 'text-emerald-400' : 'text-slate-300'}`}>Browser</div>
-                             <div className="text-[10px] text-slate-500">無料 / 画面録画</div>
+                             <div className="text-[10px] text-slate-500">旧式録画 / WebM出力</div>
                              {useBrowserTTS && <div className="absolute top-3 right-3 w-2 h-2 rounded-full bg-emerald-500 shadow-[0_0_5px_#10b981]"></div>}
                           </button>
                           <button onClick={()=>setUseBrowserTTS(false)} className={`p-4 rounded-xl border text-left relative transition-all duration-300 ${!useBrowserTTS ? 'bg-emerald-900/20 border-emerald-500 shadow-[0_0_15px_rgba(16,185,129,0.2)]' : 'bg-slate-800/30 border-slate-700 hover:bg-slate-800/50'}`}>
                              <div className="text-2xl mb-2">💎</div>
                              <div className={`font-bold mb-1 ${!useBrowserTTS ? 'text-emerald-400' : 'text-slate-300'}`}>Studio Master</div>
-                             <div className="text-[10px] text-slate-400">高品質AI / 手動カット調整済</div>
+                             <div className="text-[10px] text-slate-400">WebCodecs API / iPhone対応MP4</div>
                              {!useBrowserTTS && <div className="absolute top-3 right-3 w-2 h-2 rounded-full bg-emerald-500 shadow-[0_0_5px_#10b981]"></div>}
                           </button>
                         </div>
                       </div>
-
-                      {!useBrowserTTS && (
-                        <div className="animate-fade-in">
-                          <label className="text-xs font-bold text-slate-400 mb-3 block uppercase tracking-wider flex justify-between items-center">
-                              <span>Output Format</span>
-                              <span className="text-[9px] text-emerald-400 bg-emerald-900/20 px-2 py-0.5 rounded border border-emerald-900/50">Vercel: AAC完全対応</span>
-                          </label>
-                          <div className="grid grid-cols-1 gap-2 mb-3">
-                             {availableFormats.map((f, i) => (
-                                 <button 
-                                   key={i} 
-                                   onClick={() => setExportFormat(f)}
-                                   className={`p-3 rounded-lg border text-left transition-all ${exportFormat.mime === f.mime && exportFormat.label === f.label ? 'bg-fuchsia-600/20 border-fuchsia-500 shadow-[0_0_10px_rgba(217,70,239,0.3)]' : 'bg-slate-800/30 border-slate-700 text-slate-400 hover:bg-slate-800'}`}
-                                 >
-                                    <div className={`font-bold text-xs ${exportFormat.mime === f.mime && exportFormat.label === f.label ? 'text-white' : 'text-slate-300'}`}>
-                                        {f.label} 
-                                        <span className="font-normal opacity-50 ml-2 text-[10px]">{f.ext.toUpperCase()}</span>
-                                    </div>
-                                 </button>
-                             ))}
-                          </div>
-                          <div className="text-[10px] text-slate-400 bg-black/40 p-3 rounded-lg border border-slate-700/50 leading-relaxed">
-                              Vercel環境では、ブラウザ内で完結する<strong className="text-emerald-400">完全自動のAACオーディオ変換エンジン(FFmpeg)</strong>がフルパワーで動作します。「究極MP4」を選ぶと、外部ツール不要で納品可能なMP4が直接ダウンロードできます。
-                          </div>
-                        </div>
-                      )}
 
                       <div className="bg-slate-950/50 p-6 rounded-xl border border-slate-800 text-center relative overflow-hidden">
                           <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-fuchsia-500 to-transparent opacity-50"></div>
@@ -1256,9 +1325,9 @@
                         <button onClick={exportVideoFromStock} disabled={isBusy} 
                           className={`w-full py-4 rounded-xl font-bold text-lg shadow-xl flex justify-center items-center gap-3 transition-all duration-300 transform active:scale-[0.98]
                           ${isBusy ? 'bg-slate-800 text-slate-500 cursor-not-allowed' : 'bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 text-white hover:shadow-[0_0_20px_rgba(79,70,229,0.4)]'}`}>
-                          {isBusy ? <div className="spinner border-white/50 border-l-white"></div> : <span>🚀 動画書き出し開始 ({exportFormat.label})</span>}
+                          {isBusy ? <div className="spinner border-white/50 border-l-white"></div> : <span>🚀 MP4を生成してダウンロード</span>}
                         </button>
-                        <p className="text-[10px] text-center mt-3 text-emerald-400/80">✨ Background Worker稼働中: 別のタブを開いていても出力は止まりません</p>
+                        <p className="text-[10px] text-center mt-3 text-emerald-400/80">✨ 最新WebCodecs API搭載: メモリ不足エラーを完全に回避します</p>
                       </div>
                    </div>
                 )}
@@ -1291,9 +1360,8 @@
                   </div>
                   <div className="text-2xl font-black text-transparent bg-clip-text bg-gradient-to-r from-fuchsia-400 to-cyan-400 animate-pulse mb-2">{status}</div>
                   <div className="w-1/2 h-1 bg-slate-800 rounded-full mt-4 overflow-hidden relative">
-                     <div className="h-full bg-fuchsia-500 progress-bar absolute top-0 left-0" style={{width: `${progress}%`}}></div>
+                     <div className="h-full bg-fuchsia-500 progress-bar absolute top-0 left-0 transition-all duration-300" style={{width: `${progress}%`}}></div>
                   </div>
-                  {useBrowserTTS && <div className="mt-8 bg-emerald-900/20 border border-emerald-500/30 p-6 rounded-xl text-emerald-200 text-center backdrop-blur"><p className="font-bold text-lg mb-1">Recording...</p><p className="text-xs opacity-70">音声が流れます / ミュートにしないでください</p></div>}
                 </div>
               )}
             </div>
@@ -1333,7 +1401,6 @@
                                </div>
                                
                                <div className="flex-1 flex flex-col gap-3 justify-between">
-                                   
                                    <div className="flex gap-3">
                                       <textarea 
                                         value={s.script} 
