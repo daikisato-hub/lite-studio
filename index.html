@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Lite Studio v13.40 - Vercel Pro Edition</title>
+  <title>Lite Studio v13.40 - Final Edition</title>
 
   <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
@@ -330,7 +330,6 @@
       const [localApiKey, setLocalApiKey] = useState(apiKey || '');
       const [isDraggingSplitter, setIsDraggingSplitter] = useState(false);
 
-      const [useBrowserTTS, setUseBrowserTTS] = useState(false);
       const [showSubtitle, setShowSubtitle] = useState(true);
       const [speed, setSpeed] = useState(1.0);
       const [voiceName, setVoiceName] = useState('Kore');
@@ -720,7 +719,7 @@
       // ★★★ 最終進化：iPhone完全対応 WebCodecs API エンコーダー ★★★
       const exportVideoFromStock = async () => {
           const missing = slides.findIndex((_, i) => !audioStock.has(i) && normalizeText(slides[i].script) !== "");
-          if (missing !== -1 && !useBrowserTTS) {
+          if (missing !== -1) {
               toast(`スライド${missing+1}の音声がありません。\n更新ボタンで補充してください。`, "error");
               return;
           }
@@ -738,413 +737,193 @@
           drawSlideSync(0, "");
           await sleep(100);
 
-          if (!useBrowserTTS) {
-              try {
-                  setStatus("プロ仕様MP4エンコード準備中...");
-                  setProgress(0);
-
-                  const FPS = 30;
-                  const TARGET_SAMPLE_RATE = 44100; // 🍏 iPhone対応の「CD音質」に自動変換
-
-                  // mp4-muxerの箱を用意
-                  let muxer = new Mp4Muxer.Muxer({
-                      target: new Mp4Muxer.ArrayBufferTarget(),
-                      video: { codec: 'avc', width: 1280, height: 720 },
-                      audio: { codec: 'aac', numberOfChannels: 2, sampleRate: TARGET_SAMPLE_RATE } // 🍏 ステレオに自動変換
-                  });
-
-                  const videoEncoder = new VideoEncoder({
-                      output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
-                      error: e => console.error(e)
-                  });
-                  videoEncoder.configure({ 
-                      codec: 'avc1.4D001F', // 🍏 iPhone互換性を極限まで高めるMain Profile
-                      width: 1280, height: 720, 
-                      bitrate: 2500000, 
-                      framerate: FPS 
-                  });
-
-                  const audioEncoder = new AudioEncoder({
-                      output: (chunk, meta) => muxer.addAudioChunk(chunk, meta),
-                      error: e => console.error(e)
-                  });
-                  audioEncoder.configure({ 
-                      codec: 'mp4a.40.2', // 🍏 AAC-LC規格
-                      numberOfChannels: 2, 
-                      sampleRate: TARGET_SAMPLE_RATE, 
-                      bitrate: 128000 
-                  });
-
-                  // ★重要★ 音声と映像のタイムスタンプ（時間）を1マイクロ秒のズレもなく完璧に管理
-                  let videoTimestampUs = 0;
-                  let audioTimestampUs = 0;
-
-                  // 【便利ツール】Geminiの低音質モノラルを、iPhoneが喜ぶ高音質ステレオに変換する機能
-                  async function resampleTo44100Stereo(buffer) {
-                      if (!buffer) return null;
-                      const OfflineCtx = window.OfflineAudioContext || window.webkitOfflineAudioContext;
-                      const offlineCtx = new OfflineCtx(2, Math.ceil(buffer.duration * TARGET_SAMPLE_RATE), TARGET_SAMPLE_RATE);
-                      const source = offlineCtx.createBufferSource();
-                      source.buffer = buffer;
-                      source.connect(offlineCtx.destination);
-                      source.start(0);
-                      return await offlineCtx.startRendering();
-                  }
-
-                  // 【便利ツール】音声を1秒ずつ細かく区切って箱に詰める機能
-                  async function encodeAudioBuffer(originalBuffer) {
-                      if (!originalBuffer) return;
-                      const resampled = await resampleTo44100Stereo(originalBuffer);
-                      const chanL = resampled.getChannelData(0);
-                      const chanR = resampled.getChannelData(1);
-                      
-                      const interleaved = new Float32Array(resampled.length * 2);
-                      for (let i = 0; i < resampled.length; i++) {
-                          interleaved[i * 2] = chanL[i];
-                          interleaved[i * 2 + 1] = chanR[i];
-                      }
-                      
-                      const chunkSize = TARGET_SAMPLE_RATE; 
-                      let offset = 0;
-                      while (offset < resampled.length) {
-                          const framesToEncode = Math.min(chunkSize, resampled.length - offset);
-                          const chunkData = interleaved.slice(offset * 2, (offset + framesToEncode) * 2);
-                          
-                          const ptsUs = Math.round(audioTimestampUs + (offset / TARGET_SAMPLE_RATE) * 1000000);
-                          const audioData = new AudioData({
-                              format: 'f32',
-                              sampleRate: TARGET_SAMPLE_RATE,
-                              numberOfFrames: framesToEncode,
-                              numberOfChannels: 2,
-                              timestamp: ptsUs,
-                              data: chunkData
-                          });
-                          audioEncoder.encode(audioData);
-                          audioData.close();
-                          offset += framesToEncode;
-                          if (audioEncoder.encodeQueueSize > 30) await sleep(10);
-                      }
-                      audioTimestampUs += (resampled.length / TARGET_SAMPLE_RATE) * 1000000;
-                  }
-
-                  // 【便利ツール】無音の空間を箱に詰める機能
-                  async function encodeSilence(durationSec) {
-                      const frames = Math.floor(durationSec * TARGET_SAMPLE_RATE);
-                      if (frames <= 0) return;
-                      const interleaved = new Float32Array(frames * 2); 
-                      
-                      const chunkSize = TARGET_SAMPLE_RATE; 
-                      let offset = 0;
-                      while (offset < frames) {
-                          const framesToEncode = Math.min(chunkSize, frames - offset);
-                          const chunkData = interleaved.slice(offset * 2, (offset + framesToEncode) * 2);
-                          
-                          const ptsUs = Math.round(audioTimestampUs + (offset / TARGET_SAMPLE_RATE) * 1000000);
-                          const audioData = new AudioData({
-                              format: 'f32',
-                              sampleRate: TARGET_SAMPLE_RATE,
-                              numberOfFrames: framesToEncode,
-                              numberOfChannels: 2,
-                              timestamp: ptsUs,
-                              data: chunkData
-                          });
-                          audioEncoder.encode(audioData);
-                          audioData.close();
-                          offset += framesToEncode;
-                          if (audioEncoder.encodeQueueSize > 30) await sleep(10);
-                      }
-                      audioTimestampUs += (frames / TARGET_SAMPLE_RATE) * 1000000;
-                  }
-
-                  // === 全スライドを順番にパラパラ漫画のように描画していく ===
-                  for (let i = 0; i < slides.length; i++) {
-                      setActiveSlideIdx(i);
-                      setStatus(`動画生成中: ${i+1}/${slides.length}枚目 (iPhone最適化)`);
-
-                      const buffer = audioStock.has(i) ? audioStock.get(i) : null;
-                      const audioDur = buffer ? buffer.duration : 0.5;
-
-                      const preSilence = 0.5;
-                      const postSilence = 1.5;
-                      const totalSlideDur = preSilence + audioDur + postSilence;
-
-                      // 1. 音声をタイムラインに配置する（時間順にキッチリ並べる）
-                      await encodeSilence(preSilence);
-                      if (buffer) {
-                          await encodeAudioBuffer(buffer);
-                      } else {
-                          await encodeSilence(audioDur);
-                      }
-                      await encodeSilence(postSilence);
-
-                      // 2. 映像をタイムラインに配置する
-                      const totalFrames = Math.floor(totalSlideDur * FPS);
-                      const scriptText = normalizeText(slides[i].script);
-                      const segments = splitForSubtitles(scriptText);
-
-                      for (let f = 0; f < totalFrames; f++) {
-                          const timeSec = f / FPS;
-                          let currentSubtitle = "";
-
-                          if (timeSec >= preSilence && timeSec < preSilence + audioDur && segments.length > 0) {
-                              const p = Math.min((timeSec - preSilence) / audioDur, 0.99);
-                              const segIdx = Math.floor(p * segments.length);
-                              currentSubtitle = segments[segIdx] || "";
-                          }
-
-                          drawSlideSync(i, currentSubtitle);
-
-                          const canvas = canvasRef.current;
-                          const ptsUs = Math.round(videoTimestampUs + (f * 1000000 / FPS));
-                          const frame = new VideoFrame(canvas, { timestamp: ptsUs });
-                          
-                          videoEncoder.encode(frame, { keyFrame: f % (FPS * 2) === 0 });
-                          frame.close();
-
-                          if (videoEncoder.encodeQueueSize > 30) await sleep(1);
-                          if (f % 15 === 0) setProgress(((i + f / totalFrames) / slides.length) * 100);
-                      }
-
-                      videoTimestampUs += (totalFrames * 1000000 / FPS);
-                  }
-
-                  setProgress(100);
-                  setStatus("最終のMP4ファイルを構築中...");
-
-                  await videoEncoder.flush();
-                  await audioEncoder.flush();
-                  muxer.finalize();
-
-                  const { buffer: finalBuffer } = muxer.target;
-                  const finalBlob = new Blob([finalBuffer], { type: 'video/mp4' });
-
-                  const url = URL.createObjectURL(finalBlob);
-                  const a = document.createElement('a'); 
-                  a.href = url; 
-                  a.download = `lite_studio_v13_40_PRO.mp4`;
-                  a.click();
-
-                  toast("✨ iPhone完全対応のMP4生成に成功しました！", "success");
-                  setIsBusy(false);
-                  setStatus("完了");
-
-              } catch (e) {
-                  console.error(e);
-                  toast("MP4エンコードエラー: " + e.message, "error");
-                  setIsBusy(false);
-                  setStatus("エラー");
-              }
-              return;
-          }
-
-          // 🆓 Browser モード (予備として残します)
-          setStatus("動画書き出し準備...");
-          const ctx = getAudioContext();
-          const dest = ctx.createMediaStreamDestination();
-          const canvasStream = canvasRef.current.captureStream(30);
-          const combined = new MediaStream([...canvasStream.getVideoTracks(), ...dest.stream.getAudioTracks()]);
-          
-          let mimeType = exportFormat.mime;
-          try { if (!MediaRecorder.isTypeSupported(mimeType)) mimeType = 'video/webm'; } catch(e) { mimeType = 'video/webm'; }
-
-          const recorder = new MediaRecorder(combined, { 
-              mimeType, 
-              videoBitsPerSecond: 2500000,
-              audioBitsPerSecond: 128000
-          }); 
-          const chunks = [];
-          
-          recorder.ondataavailable = e => { if (e.data && e.data.size > 0) chunks.push(e.data); };
-          let stopResolve;
-          const stopPromise = new Promise(r => stopResolve = r);
-          recorder.onstop = stopResolve;
-          
-          let hasError = false;
-          const INTER_SLIDE_SILENCE = 2.0;
-
-          let bgWorker = null;
-          const workerCode = `
-            let timer = null;
-            self.onmessage = function(e) {
-              if (e.data === 'start') {
-                timer = setInterval(() => self.postMessage('tick'), 1000 / 30);
-              } else if (e.data === 'stop') {
-                clearInterval(timer);
-              }
-            };
-          `;
           try {
-              const workerBlob = new Blob([workerCode], { type: 'application/javascript' });
-              const workerUrl = URL.createObjectURL(workerBlob);
-              bgWorker = new Worker(workerUrl);
-              bgWorker.postMessage('start');
-          } catch(e) {
-              console.warn("Worker creation blocked. Using fallback timer.");
-          }
+              setStatus("プロ仕様MP4エンコード準備中...");
+              setProgress(0);
 
-          const playSegmentWithHybridSync = (idx, buffer, durationSec, isSilence) => {
-              if (durationSec <= 0) return Promise.resolve();
-              
-              return new Promise((resolve, reject) => {
-                  let source = null;
-                  let startTime = ctx.currentTime;
-                  let isPlaying = true;
-                  
-                  let fallbackTimer = null;
-                  let tickCount = 0;
-                  
-                  const finish = () => {
-                      if (!isPlaying) return;
-                      isPlaying = false;
-                      if (bgWorker) bgWorker.removeEventListener('message', messageHandler);
-                      if (fallbackTimer) clearInterval(fallbackTimer);
-                      resolve();
-                  };
+              const FPS = 30;
+              const TARGET_SAMPLE_RATE = 44100; // 🍏 iPhone対応の「CD音質」
 
-                  if (!isSilence && buffer) {
-                      source = ctx.createBufferSource();
-                      source.buffer = buffer;
-                      source.connect(dest);
-                      source.onended = finish; 
-                      source.start(startTime);
-                  }
-                  
-                  const scriptText = normalizeText(slides[idx].script);
-                  const segments = splitForSubtitles(scriptText);
-                  
-                  const messageHandler = () => {
-                      try {
-                          if (!isPlaying) return;
-                          const elapsed = ctx.currentTime - startTime;
-                          tickCount++;
-                          
-                          if (!isSilence) {
-                              if (showSubtitle && segments.length) {
-                                  const p = Math.min(elapsed / durationSec, 0.99);
-                                  const segIdx = Math.floor(p * segments.length);
-                                  drawSlideSync(idx, segments[segIdx] || "");
-                              } else {
-                                  drawSlideSync(idx, "");
-                              }
-                          } else {
-                              drawSlideSync(idx, "");
-                              const canvas = canvasRef.current;
-                              if (canvas) {
-                                  const context = canvas.getContext('2d');
-                                  context.fillStyle = `rgba(0,0,0,${0.01 + (tickCount % 2) * 0.01})`;
-                                  context.fillRect(0, 0, 1, 1);
-                              }
-                              if (elapsed >= durationSec) {
-                                  finish();
-                              }
-                          }
-                      } catch(err) {
-                          finish(); 
-                      }
-                  };
-                  
-                  if (bgWorker) {
-                      bgWorker.addEventListener('message', messageHandler);
-                  } else {
-                      fallbackTimer = setInterval(messageHandler, 1000 / 30);
-                  }
+              // mp4-muxerの箱を用意
+              let muxer = new Mp4Muxer.Muxer({
+                  target: new Mp4Muxer.ArrayBufferTarget(),
+                  video: { codec: 'avc', width: 1280, height: 720 },
+                  audio: { codec: 'aac', numberOfChannels: 2, sampleRate: TARGET_SAMPLE_RATE }
               });
-          };
 
-          let finalBlob = null;
+              const videoEncoder = new VideoEncoder({
+                  output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
+                  error: e => console.error(e)
+              });
+              videoEncoder.configure({ 
+                  codec: 'avc1.4D001F', // Main Profile
+                  width: 1280, height: 720, 
+                  bitrate: 2500000, 
+                  framerate: FPS 
+              });
 
-          try {
-              recorder.start(); 
+              const audioEncoder = new AudioEncoder({
+                  output: (chunk, meta) => muxer.addAudioChunk(chunk, meta),
+                  error: e => console.error(e)
+              });
+              audioEncoder.configure({ 
+                  codec: 'mp4a.40.2', 
+                  numberOfChannels: 2, 
+                  sampleRate: TARGET_SAMPLE_RATE, 
+                  bitrate: 128000 
+              });
+
+              let videoTimestampUs = 0;
+              let audioTimestampUs = 0;
+
+              async function resampleTo44100Stereo(buffer) {
+                  if (!buffer) return null;
+                  const OfflineCtx = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+                  const offlineCtx = new OfflineCtx(2, Math.ceil(buffer.duration * TARGET_SAMPLE_RATE), TARGET_SAMPLE_RATE);
+                  const source = offlineCtx.createBufferSource();
+                  source.buffer = buffer;
+                  source.connect(offlineCtx.destination);
+                  source.start(0);
+                  return await offlineCtx.startRendering();
+              }
+
+              async function encodeAudioBuffer(originalBuffer) {
+                  if (!originalBuffer) return;
+                  const resampled = await resampleTo44100Stereo(originalBuffer);
+                  const chanL = resampled.getChannelData(0);
+                  const chanR = resampled.getChannelData(1);
+                  
+                  const interleaved = new Float32Array(resampled.length * 2);
+                  for (let i = 0; i < resampled.length; i++) {
+                      interleaved[i * 2] = chanL[i];
+                      interleaved[i * 2 + 1] = chanR[i];
+                  }
+                  
+                  const chunkSize = TARGET_SAMPLE_RATE; 
+                  let offset = 0;
+                  while (offset < resampled.length) {
+                      const framesToEncode = Math.min(chunkSize, resampled.length - offset);
+                      const chunkData = interleaved.slice(offset * 2, (offset + framesToEncode) * 2);
+                      
+                      const ptsUs = Math.round(audioTimestampUs + (offset / TARGET_SAMPLE_RATE) * 1000000);
+                      const audioData = new AudioData({
+                          format: 'f32',
+                          sampleRate: TARGET_SAMPLE_RATE,
+                          numberOfFrames: framesToEncode,
+                          numberOfChannels: 2,
+                          timestamp: ptsUs,
+                          data: chunkData
+                      });
+                      audioEncoder.encode(audioData);
+                      audioData.close();
+                      offset += framesToEncode;
+                      if (audioEncoder.encodeQueueSize > 30) await sleep(10);
+                  }
+                  audioTimestampUs += (resampled.length / TARGET_SAMPLE_RATE) * 1000000;
+              }
+
+              async function encodeSilence(durationSec) {
+                  const frames = Math.floor(durationSec * TARGET_SAMPLE_RATE);
+                  if (frames <= 0) return;
+                  const interleaved = new Float32Array(frames * 2); 
+                  
+                  const chunkSize = TARGET_SAMPLE_RATE; 
+                  let offset = 0;
+                  while (offset < frames) {
+                      const framesToEncode = Math.min(chunkSize, frames - offset);
+                      const chunkData = interleaved.slice(offset * 2, (offset + framesToEncode) * 2);
+                      
+                      const ptsUs = Math.round(audioTimestampUs + (offset / TARGET_SAMPLE_RATE) * 1000000);
+                      const audioData = new AudioData({
+                          format: 'f32',
+                          sampleRate: TARGET_SAMPLE_RATE,
+                          numberOfFrames: framesToEncode,
+                          numberOfChannels: 2,
+                          timestamp: ptsUs,
+                          data: chunkData
+                      });
+                      audioEncoder.encode(audioData);
+                      audioData.close();
+                      offset += framesToEncode;
+                      if (audioEncoder.encodeQueueSize > 30) await sleep(10);
+                  }
+                  audioTimestampUs += (frames / TARGET_SAMPLE_RATE) * 1000000;
+              }
 
               for (let i = 0; i < slides.length; i++) {
                   setActiveSlideIdx(i);
-                  setStatus(`録画中: ${i+1}/${slides.length}`);
-                  setProgress(((i + 1) / slides.length) * 100);
-                  
-                  if (!useBrowserTTS) {
-                      await playSegmentWithHybridSync(i, null, 0.5, true);
+                  setStatus(`動画生成中: ${i+1}/${slides.length}枚目 (最終処理)`);
 
-                      if (audioStock.has(i)) {
-                          const buffer = audioStock.get(i);
-                          await playSegmentWithHybridSync(i, buffer, buffer.duration, false);
+                  const buffer = audioStock.has(i) ? audioStock.get(i) : null;
+                  const audioDur = buffer ? buffer.duration : 0.5;
+
+                  const preSilence = 0.5;
+                  const postSilence = 1.5;
+                  const totalSlideDur = preSilence + audioDur + postSilence;
+
+                  await encodeSilence(preSilence);
+                  if (buffer) {
+                      await encodeAudioBuffer(buffer);
+                  } else {
+                      await encodeSilence(audioDur);
+                  }
+                  await encodeSilence(postSilence);
+
+                  const totalFrames = Math.floor(totalSlideDur * FPS);
+                  const scriptText = normalizeText(slides[i].script);
+                  const segments = splitForSubtitles(scriptText);
+
+                  for (let f = 0; f < totalFrames; f++) {
+                      const timeSec = f / FPS;
+                      let currentSubtitle = "";
+
+                      if (timeSec >= preSilence && timeSec < preSilence + audioDur && segments.length > 0) {
+                          const p = Math.min((timeSec - preSilence) / audioDur, 0.99);
+                          const segIdx = Math.floor(p * segments.length);
+                          currentSubtitle = segments[segIdx] || "";
                       }
 
-                      await playSegmentWithHybridSync(i, null, INTER_SLIDE_SILENCE - 0.5, true);
+                      drawSlideSync(i, currentSubtitle);
 
-                  } else {
-                      await new Promise(resolve => {
-                          const u = new SpeechSynthesisUtterance(slides[i].script);
-                          u.lang = 'ja-JP'; u.rate = speed;
-                          const scriptText = normalizeText(slides[i].script);
-                          const segments = splitForSubtitles(scriptText);
-                          let startTimestamp = 0;
-                          const estDur = Math.max(scriptText.length * 200 / speed, 2000); 
-                          
-                          let fallbackTimer = null;
-                          const ttsMessageHandler = () => {
-                              if (startTimestamp === 0) return;
-                              const elapsed = Date.now() - startTimestamp;
-                              if (showSubtitle && segments.length) {
-                                  const p = Math.min(elapsed / estDur, 0.95);
-                                  const idx = Math.floor(p * segments.length);
-                                  drawSlideSync(i, segments[idx] || "");
-                              } else {
-                                  drawSlideSync(i, "");
-                              }
-                          };
-                          
-                          if (bgWorker) {
-                              bgWorker.addEventListener('message', ttsMessageHandler);
-                          } else {
-                              fallbackTimer = setInterval(ttsMessageHandler, 1000 / 30);
-                          }
-
-                          u.onstart = () => { startTimestamp = Date.now(); };
-                          const cleanup = () => {
-                              if(bgWorker) bgWorker.removeEventListener('message', ttsMessageHandler);
-                              if(fallbackTimer) clearInterval(fallbackTimer);
-                              resolve();
-                          };
-                          u.onend = cleanup;
-                          u.onerror = cleanup;
-                          
-                          setTimeout(cleanup, estDur + 2000);
-                          
-                          window.speechSynthesis.cancel();
-                          window.speechSynthesis.speak(u);
-                      });
+                      const canvas = canvasRef.current;
+                      const ptsUs = Math.round(videoTimestampUs + (f * 1000000 / FPS));
+                      const frame = new VideoFrame(canvas, { timestamp: ptsUs });
                       
-                      await playSegmentWithHybridSync(i, null, INTER_SLIDE_SILENCE, true);
+                      videoEncoder.encode(frame, { keyFrame: f % (FPS * 2) === 0 });
+                      frame.close();
+
+                      if (videoEncoder.encodeQueueSize > 30) await sleep(1);
+                      if (f % 15 === 0) setProgress(((i + f / totalFrames) / slides.length) * 100);
                   }
+
+                  videoTimestampUs += (totalFrames * 1000000 / FPS);
               }
-              
-              await playSegmentWithHybridSync(slides.length - 1, null, 1.0, true);
+
+              setProgress(100);
+              setStatus("最終のMP4ファイルを構築中...");
+
+              await videoEncoder.flush();
+              await audioEncoder.flush();
+              muxer.finalize();
+
+              const { buffer: finalBuffer } = muxer.target;
+              const finalBlob = new Blob([finalBuffer], { type: 'video/mp4' });
+
+              const url = URL.createObjectURL(finalBlob);
+              const a = document.createElement('a'); 
+              a.href = url; 
+              a.download = `lite_studio_FINAL.mp4`;
+              a.click();
+
+              toast("✨ 完全なMP4生成に成功しました！", "success");
+              setIsBusy(false);
+              setStatus("完了");
 
           } catch (e) {
-              hasError = true;
-              toast("録画エラー: " + e.message, "error");
-          } finally {
-              if (bgWorker) {
-                  bgWorker.postMessage('stop');
-                  bgWorker.terminate();
-              }
-              
-              recorder.stop();
-              await stopPromise;
-              
-              if (!hasError && chunks.length > 0) {
-                  finalBlob = new Blob(chunks, { type: mimeType });
-                  const url = URL.createObjectURL(finalBlob);
-                  const a = document.createElement('a'); 
-                  a.href = url; 
-                  a.download = `lite_studio_v13_40_vercel.${exportFormat.ext}`;
-                  a.click();
-                  toast("動画の書き出しが完了しました！", "success");
-              } else {
-                  toast("⚠️ 動画データの生成に失敗しました（0バイト）。", "error");
-              }
-              setIsBusy(false); setStatus(hasError || chunks.length === 0 ? "書出失敗" : "完了");
-              setProgress(0);
+              console.error(e);
+              toast("MP4エンコードエラー: " + e.message, "error");
+              setIsBusy(false);
+              setStatus("エラー");
           }
       };
 
@@ -1193,7 +972,7 @@
           <header className="glass-panel border-b border-slate-700/50 p-3 flex justify-between items-center z-10 sticky top-0">
             <div className="flex items-center gap-4">
               <h1 className="text-xl font-black italic bg-gradient-to-r from-fuchsia-400 via-purple-400 to-indigo-400 bg-clip-text text-transparent drop-shadow-sm">
-                Lite Studio <span className="text-xs not-italic font-normal text-fuchsia-400">v13.40 Pro</span>
+                Lite Studio <span className="text-xs not-italic font-normal text-fuchsia-400">v13.40 FINAL</span>
               </h1>
               <div className="flex gap-1">
                 {[1,2,3,4].map(n => (
@@ -1313,59 +1092,45 @@
                 )}
                 
                 {step === 4 && (
-                   <div className="glass-panel p-6 rounded-2xl border-slate-700 space-y-8 animate-fade-in">
-                      <div className="flex items-center justify-between mb-2">
+                   <div className="glass-panel p-8 rounded-2xl border-slate-700 space-y-8 animate-fade-in flex flex-col items-center">
+                      <div className="w-full flex items-center justify-between mb-4 border-b border-slate-700/50 pb-4">
                         <button onClick={()=>setStep(3)} className="text-xs text-slate-400 hover:text-white transition-colors flex items-center gap-1">← Back</button>
-                        <h3 className="font-bold text-xl text-white">Export</h3>
-                      </div>
-                      
-                      <div>
-                        <label className="text-xs font-bold text-slate-400 mb-3 block uppercase tracking-wider">Mode Selection</label>
-                        <div className="grid grid-cols-2 gap-4">
-                          <button onClick={()=>setUseBrowserTTS(true)} className={`p-4 rounded-xl border text-left relative transition-all duration-300 ${useBrowserTTS ? 'bg-emerald-900/20 border-emerald-500 shadow-[0_0_15px_rgba(16,185,129,0.2)]' : 'bg-slate-800/30 border-slate-700 hover:bg-slate-800/50'}`}>
-                             <div className="text-2xl mb-2">🆓</div>
-                             <div className={`font-bold mb-1 ${useBrowserTTS ? 'text-emerald-400' : 'text-slate-300'}`}>Browser</div>
-                             <div className="text-[10px] text-slate-500">旧式録画 / WebM出力</div>
-                             {useBrowserTTS && <div className="absolute top-3 right-3 w-2 h-2 rounded-full bg-emerald-500 shadow-[0_0_5px_#10b981]"></div>}
-                          </button>
-                          <button onClick={()=>setUseBrowserTTS(false)} className={`p-4 rounded-xl border text-left relative transition-all duration-300 ${!useBrowserTTS ? 'bg-emerald-900/20 border-emerald-500 shadow-[0_0_15px_rgba(16,185,129,0.2)]' : 'bg-slate-800/30 border-slate-700 hover:bg-slate-800/50'}`}>
-                             <div className="text-2xl mb-2">💎</div>
-                             <div className={`font-bold mb-1 ${!useBrowserTTS ? 'text-emerald-400' : 'text-slate-300'}`}>Studio Master</div>
-                             <div className="text-[10px] text-slate-400">WebCodecs API / iPhone対応MP4</div>
-                             {!useBrowserTTS && <div className="absolute top-3 right-3 w-2 h-2 rounded-full bg-emerald-500 shadow-[0_0_5px_#10b981]"></div>}
-                          </button>
-                        </div>
+                        <h3 className="font-bold text-xl text-white tracking-widest">FINAL EXPORT</h3>
+                        <div className="w-16"></div>
                       </div>
 
-                      <div className="bg-slate-950/50 p-6 rounded-xl border border-slate-800 text-center relative overflow-hidden">
+                      <div className="bg-slate-900/60 p-8 rounded-2xl border border-fuchsia-500/20 text-center w-full max-w-md shadow-2xl relative overflow-hidden">
                           <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-fuchsia-500 to-transparent opacity-50"></div>
-                          <div className="text-[10px] text-slate-500 uppercase tracking-widest mb-2">Current Stock</div>
-                          <div className="text-4xl font-black text-white mb-1 flex items-baseline justify-center gap-1">
-                             <span className={audioStock.size === slides.length ? "text-emerald-400 drop-shadow-[0_0_8px_rgba(52,211,153,0.5)]" : "text-amber-400"}>{audioStock.size}</span> 
-                             <span className="text-lg text-slate-600 font-normal">/ {slides.length}</span>
+                          <div className="text-6xl mb-4">💎</div>
+                          <div className="text-xl font-bold text-white mb-2">Studio Master Engine</div>
+                          <p className="text-xs text-slate-400 mb-6 leading-relaxed">
+                             最新のWebCodecs技術を使用し、<br/>
+                             iPhoneやすべてのデバイスで再生可能な<br/>
+                             <b>高品質MP4</b>を直接生成します。
+                          </p>
+
+                          <div className="bg-black/50 p-4 rounded-xl border border-slate-800 mb-6">
+                              <div className="text-[10px] text-slate-500 uppercase tracking-widest mb-1">Current Stock</div>
+                              <div className="text-3xl font-black text-white flex items-baseline justify-center gap-1">
+                                 <span className={audioStock.size === slides.length ? "text-emerald-400 drop-shadow-[0_0_8px_rgba(52,211,153,0.5)]" : "text-amber-400"}>{audioStock.size}</span> 
+                                 <span className="text-sm text-slate-600 font-normal">/ {slides.length}</span>
+                              </div>
+                              {audioStock.size < slides.length && <p className="text-[10px] text-amber-500 mt-2 bg-amber-900/20 inline-block px-3 py-1 rounded border border-amber-900/50">⚠️ 音声が不足しています</p>}
                           </div>
-                          {audioStock.size < slides.length && !useBrowserTTS && <p className="text-[10px] text-amber-500 mt-2 bg-amber-900/20 inline-block px-3 py-1 rounded border border-amber-900/50">⚠️ 音声が不足しています</p>}
-                          {audioStock.size === slides.length && !useBrowserTTS && <p className="text-[10px] text-emerald-400 mt-2 bg-emerald-900/20 inline-block px-3 py-1 rounded border border-emerald-900/50">✨ Ready to Build</p>}
-                      </div>
 
-                      <div>
-                        <div className="flex justify-between items-center mb-3">
-                           <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Subtitles</label>
-                           <div className="flex bg-slate-900 rounded-lg p-1 border border-slate-700">
-                             <button onClick={()=>setShowSubtitle(true)} className={`px-4 py-1 rounded-md text-[10px] font-bold transition-all ${showSubtitle?'bg-fuchsia-600 text-white shadow-md':'text-slate-500 hover:text-slate-300'}`}>ON</button>
-                             <button onClick={()=>setShowSubtitle(false)} className={`px-4 py-1 rounded-md text-[10px] font-bold transition-all ${!showSubtitle?'bg-slate-700 text-white shadow-md':'text-slate-500 hover:text-slate-300'}`}>OFF</button>
-                           </div>
-                        </div>
-                        <p className="text-[10px] text-slate-500">※ OFFにするとスライドが全画面表示になります</p>
-                      </div>
+                          <div className="flex justify-between items-center bg-slate-950/50 rounded-lg p-2 border border-slate-800 mb-8">
+                             <span className="text-xs font-bold text-slate-400 ml-2">Subtitles (字幕)</span>
+                             <div className="flex bg-black rounded-md p-1 border border-slate-700">
+                               <button onClick={()=>setShowSubtitle(true)} className={`px-4 py-1 rounded text-[10px] font-bold transition-all ${showSubtitle?'bg-fuchsia-600 text-white shadow-md':'text-slate-500 hover:text-slate-300'}`}>ON</button>
+                               <button onClick={()=>setShowSubtitle(false)} className={`px-4 py-1 rounded text-[10px] font-bold transition-all ${!showSubtitle?'bg-slate-700 text-white shadow-md':'text-slate-500 hover:text-slate-300'}`}>OFF</button>
+                             </div>
+                          </div>
 
-                      <div className="pt-6 border-t border-slate-700/50">
-                        <button onClick={exportVideoFromStock} disabled={isBusy} 
-                          className={`w-full py-4 rounded-xl font-bold text-lg shadow-xl flex justify-center items-center gap-3 transition-all duration-300 transform active:scale-[0.98]
-                          ${isBusy ? 'bg-slate-800 text-slate-500 cursor-not-allowed' : 'bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 text-white hover:shadow-[0_0_20px_rgba(79,70,229,0.4)]'}`}>
-                          {isBusy ? <div className="spinner border-white/50 border-l-white"></div> : <span>🚀 MP4を生成してダウンロード</span>}
-                        </button>
-                        <p className="text-[10px] text-center mt-3 text-emerald-400/80">✨ 最新WebCodecs API搭載: メモリ不足エラーを完全に回避します</p>
+                          <button onClick={exportVideoFromStock} disabled={isBusy} 
+                            className={`w-full py-5 rounded-xl font-black text-lg shadow-xl flex justify-center items-center gap-3 transition-all duration-300 transform active:scale-[0.98]
+                            ${isBusy ? 'bg-slate-800 text-slate-500 cursor-not-allowed' : 'bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 text-white hover:shadow-[0_0_20px_rgba(79,70,229,0.4)] hover:scale-[1.02]'}`}>
+                            {isBusy ? <div className="spinner border-white/50 border-l-white"></div> : <span>🚀 MP4を出力する</span>}
+                          </button>
                       </div>
                    </div>
                 )}
