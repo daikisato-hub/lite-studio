@@ -748,7 +748,8 @@
               let muxer = new Mp4Muxer.Muxer({
                   target: new Mp4Muxer.ArrayBufferTarget(),
                   video: { codec: 'avc', width: 1280, height: 720 },
-                  audio: { codec: 'aac', numberOfChannels: 2, sampleRate: TARGET_SAMPLE_RATE }
+                  audio: { codec: 'aac', numberOfChannels: 2, sampleRate: TARGET_SAMPLE_RATE },
+                  fastStart: 'in-memory' //
               });
 
               const videoEncoder = new VideoEncoder({
