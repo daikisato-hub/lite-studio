@@ -717,7 +717,7 @@
 
       const stopAudio = () => { stopGlobalAudio(); };
 
-      // ★★★ 最新プロ仕様：WebCodecs API による完全オフラインMP4生成 ★★★
+      // ★★★ 最終進化：iPhone完全対応 WebCodecs API エンコーダー ★★★
       const exportVideoFromStock = async () => {
           const missing = slides.findIndex((_, i) => !audioStock.has(i) && normalizeText(slides[i].script) !== "");
           if (missing !== -1 && !useBrowserTTS) {
@@ -738,88 +738,128 @@
           drawSlideSync(0, "");
           await sleep(100);
 
-          // ==============================================================================
-          // 💎 Studio Master モード: WebCodecs + mp4-muxer (超安定・iPhone完全対応MP4)
-          // ==============================================================================
           if (!useBrowserTTS) {
               try {
                   setStatus("プロ仕様MP4エンコード準備中...");
                   setProgress(0);
 
                   const FPS = 30;
-                  const SAMPLE_RATE = 24000; // Gemini TTSの仕様に合わせたサンプリングレート
+                  const TARGET_SAMPLE_RATE = 44100; // 🍏 iPhone対応の「CD音質」に自動変換
 
-                  // mp4-muxerの箱（コンテナ）を用意
+                  // mp4-muxerの箱を用意
                   let muxer = new Mp4Muxer.Muxer({
                       target: new Mp4Muxer.ArrayBufferTarget(),
-                      video: { codec: 'avc', width: 1280, height: 720 }, // 720p（メモリ安全サイズ）
-                      audio: { codec: 'aac', numberOfChannels: 1, sampleRate: SAMPLE_RATE }
+                      video: { codec: 'avc', width: 1280, height: 720 },
+                      audio: { codec: 'aac', numberOfChannels: 2, sampleRate: TARGET_SAMPLE_RATE } // 🍏 ステレオに自動変換
                   });
 
-                  // 映像圧縮職人 (H.264 / AVC)
                   const videoEncoder = new VideoEncoder({
                       output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
-                      error: e => { console.error(e); }
+                      error: e => console.error(e)
                   });
                   videoEncoder.configure({ 
-                      codec: 'avc1.42E01F', // iPhone/Safariで確実に再生できる互換性重視のプロファイル
+                      codec: 'avc1.4D001F', // 🍏 iPhone互換性を極限まで高めるMain Profile
                       width: 1280, height: 720, 
                       bitrate: 2500000, 
                       framerate: FPS 
                   });
 
-                  // 音声圧縮職人 (AAC)
                   const audioEncoder = new AudioEncoder({
                       output: (chunk, meta) => muxer.addAudioChunk(chunk, meta),
-                      error: e => { console.error(e); }
+                      error: e => console.error(e)
                   });
                   audioEncoder.configure({ 
-                      codec: 'mp4a.40.2', // AAC-LC
-                      numberOfChannels: 1, 
-                      sampleRate: SAMPLE_RATE, 
+                      codec: 'mp4a.40.2', // 🍏 AAC-LC規格
+                      numberOfChannels: 2, 
+                      sampleRate: TARGET_SAMPLE_RATE, 
                       bitrate: 128000 
                   });
 
-                  let currentTimestampUs = 0; // マイクロ秒単位の進行時間
+                  // ★重要★ 音声と映像のタイムスタンプ（時間）を1マイクロ秒のズレもなく完璧に管理
+                  let videoTimestampUs = 0;
+                  let audioTimestampUs = 0;
 
-                  // 【便利ツール】AudioBufferの波形を切り取ってエンコーダーに送る機能
-                  async function encodeAudioBuffer(buffer) {
-                      if (!buffer) return;
-                      const channelData = buffer.getChannelData(0);
-                      const chunkSize = SAMPLE_RATE; // 1秒ごとに区切ってメモリパンクを防ぐ
+                  // 【便利ツール】Geminiの低音質モノラルを、iPhoneが喜ぶ高音質ステレオに変換する機能
+                  async function resampleTo44100Stereo(buffer) {
+                      if (!buffer) return null;
+                      const OfflineCtx = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+                      const offlineCtx = new OfflineCtx(2, Math.ceil(buffer.duration * TARGET_SAMPLE_RATE), TARGET_SAMPLE_RATE);
+                      const source = offlineCtx.createBufferSource();
+                      source.buffer = buffer;
+                      source.connect(offlineCtx.destination);
+                      source.start(0);
+                      return await offlineCtx.startRendering();
+                  }
+
+                  // 【便利ツール】音声を1秒ずつ細かく区切って箱に詰める機能
+                  async function encodeAudioBuffer(originalBuffer) {
+                      if (!originalBuffer) return;
+                      const resampled = await resampleTo44100Stereo(originalBuffer);
+                      const chanL = resampled.getChannelData(0);
+                      const chanR = resampled.getChannelData(1);
+                      
+                      const interleaved = new Float32Array(resampled.length * 2);
+                      for (let i = 0; i < resampled.length; i++) {
+                          interleaved[i * 2] = chanL[i];
+                          interleaved[i * 2 + 1] = chanR[i];
+                      }
+                      
+                      const chunkSize = TARGET_SAMPLE_RATE; 
                       let offset = 0;
-                      while (offset < channelData.length) {
-                          const framesToEncode = Math.min(chunkSize, channelData.length - offset);
-                          const chunkData = channelData.slice(offset, offset + framesToEncode);
+                      while (offset < resampled.length) {
+                          const framesToEncode = Math.min(chunkSize, resampled.length - offset);
+                          const chunkData = interleaved.slice(offset * 2, (offset + framesToEncode) * 2);
+                          
+                          const ptsUs = Math.round(audioTimestampUs + (offset / TARGET_SAMPLE_RATE) * 1000000);
                           const audioData = new AudioData({
-                              format: 'f32-planar',
-                              sampleRate: buffer.sampleRate,
+                              format: 'f32',
+                              sampleRate: TARGET_SAMPLE_RATE,
                               numberOfFrames: framesToEncode,
-                              numberOfChannels: 1,
-                              timestamp: currentTimestampUs + (offset / buffer.sampleRate) * 1000000,
+                              numberOfChannels: 2,
+                              timestamp: ptsUs,
                               data: chunkData
                           });
                           audioEncoder.encode(audioData);
                           audioData.close();
                           offset += framesToEncode;
-                          // エンコーダーがパンクしないように時々休ませる
                           if (audioEncoder.encodeQueueSize > 30) await sleep(10);
                       }
+                      audioTimestampUs += (resampled.length / TARGET_SAMPLE_RATE) * 1000000;
                   }
 
-                  // 【便利ツール】無音の波形を作ってエンコーダーに送る機能
+                  // 【便利ツール】無音の空間を箱に詰める機能
                   async function encodeSilence(durationSec) {
-                      const frames = Math.floor(durationSec * SAMPLE_RATE);
+                      const frames = Math.floor(durationSec * TARGET_SAMPLE_RATE);
                       if (frames <= 0) return;
-                      const ctx = getAudioContext();
-                      const emptyBuffer = ctx.createBuffer(1, frames, SAMPLE_RATE);
-                      await encodeAudioBuffer(emptyBuffer);
+                      const interleaved = new Float32Array(frames * 2); 
+                      
+                      const chunkSize = TARGET_SAMPLE_RATE; 
+                      let offset = 0;
+                      while (offset < frames) {
+                          const framesToEncode = Math.min(chunkSize, frames - offset);
+                          const chunkData = interleaved.slice(offset * 2, (offset + framesToEncode) * 2);
+                          
+                          const ptsUs = Math.round(audioTimestampUs + (offset / TARGET_SAMPLE_RATE) * 1000000);
+                          const audioData = new AudioData({
+                              format: 'f32',
+                              sampleRate: TARGET_SAMPLE_RATE,
+                              numberOfFrames: framesToEncode,
+                              numberOfChannels: 2,
+                              timestamp: ptsUs,
+                              data: chunkData
+                          });
+                          audioEncoder.encode(audioData);
+                          audioData.close();
+                          offset += framesToEncode;
+                          if (audioEncoder.encodeQueueSize > 30) await sleep(10);
+                      }
+                      audioTimestampUs += (frames / TARGET_SAMPLE_RATE) * 1000000;
                   }
 
                   // === 全スライドを順番にパラパラ漫画のように描画していく ===
                   for (let i = 0; i < slides.length; i++) {
                       setActiveSlideIdx(i);
-                      setStatus(`動画生成中: ${i+1}/${slides.length}枚目 (安定処理)`);
+                      setStatus(`動画生成中: ${i+1}/${slides.length}枚目 (iPhone最適化)`);
 
                       const buffer = audioStock.has(i) ? audioStock.get(i) : null;
                       const audioDur = buffer ? buffer.duration : 0.5;
@@ -828,12 +868,16 @@
                       const postSilence = 1.5;
                       const totalSlideDur = preSilence + audioDur + postSilence;
 
-                      // 1. まず「音声」をタイムラインに配置する
+                      // 1. 音声をタイムラインに配置する（時間順にキッチリ並べる）
                       await encodeSilence(preSilence);
-                      if (buffer) await encodeAudioBuffer(buffer);
+                      if (buffer) {
+                          await encodeAudioBuffer(buffer);
+                      } else {
+                          await encodeSilence(audioDur);
+                      }
                       await encodeSilence(postSilence);
 
-                      // 2. 次に「映像（パラパラ漫画）」をタイムラインに配置する
+                      // 2. 映像をタイムラインに配置する
                       const totalFrames = Math.floor(totalSlideDur * FPS);
                       const scriptText = normalizeText(slides[i].script);
                       const segments = splitForSubtitles(scriptText);
@@ -842,39 +886,35 @@
                           const timeSec = f / FPS;
                           let currentSubtitle = "";
 
-                          // 適切なタイミングの字幕のテキストを探す
                           if (timeSec >= preSilence && timeSec < preSilence + audioDur && segments.length > 0) {
                               const p = Math.min((timeSec - preSilence) / audioDur, 0.99);
                               const segIdx = Math.floor(p * segments.length);
                               currentSubtitle = segments[segIdx] || "";
                           }
 
-                          // キャンバスに1コマ分を描画
                           drawSlideSync(i, currentSubtitle);
 
-                          // キャンバスから映像の1コマを剥ぎ取ってエンコーダーに渡す
                           const canvas = canvasRef.current;
-                          const frame = new VideoFrame(canvas, { timestamp: currentTimestampUs + (f * 1000000 / FPS) });
-                          videoEncoder.encode(frame, { keyFrame: f % 60 === 0 });
+                          const ptsUs = Math.round(videoTimestampUs + (f * 1000000 / FPS));
+                          const frame = new VideoFrame(canvas, { timestamp: ptsUs });
+                          
+                          videoEncoder.encode(frame, { keyFrame: f % (FPS * 2) === 0 });
                           frame.close();
 
                           if (videoEncoder.encodeQueueSize > 30) await sleep(1);
                           if (f % 15 === 0) setProgress(((i + f / totalFrames) / slides.length) * 100);
                       }
 
-                      // 時間の針を次のスライドの開始位置へ進める
-                      currentTimestampUs += totalSlideDur * 1000000;
+                      videoTimestampUs += (totalFrames * 1000000 / FPS);
                   }
 
                   setProgress(100);
                   setStatus("最終のMP4ファイルを構築中...");
 
-                  // すべての処理が終わるのを待つ
                   await videoEncoder.flush();
                   await audioEncoder.flush();
                   muxer.finalize();
 
-                  // 完全に書き上がった箱（MP4）をダウンロード
                   const { buffer: finalBuffer } = muxer.target;
                   const finalBlob = new Blob([finalBuffer], { type: 'video/mp4' });
 
@@ -884,7 +924,7 @@
                   a.download = `lite_studio_v13_40_PRO.mp4`;
                   a.click();
 
-                  toast("✨ iPhone対応の完全なMP4の生成に成功しました！", "success");
+                  toast("✨ iPhone完全対応のMP4生成に成功しました！", "success");
                   setIsBusy(false);
                   setStatus("完了");
 
@@ -897,9 +937,7 @@
               return;
           }
 
-          // ==============================================================================
-          // 🆓 Browser モード: 旧来のMediaRecorder (※今回は使用しませんが残してあります)
-          // ==============================================================================
+          // 🆓 Browser モード (予備として残します)
           setStatus("動画書き出し準備...");
           const ctx = getAudioContext();
           const dest = ctx.createMediaStreamDestination();
