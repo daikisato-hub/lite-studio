@@ -102,6 +102,73 @@
         background: #475569; 
         border-radius: 2px; 
     }
+
+    /* 🍺 ビールジョッキのアニメーションCSS */
+    .beer-glass-container {
+        position: relative;
+        width: 70px;
+        height: 90px;
+        margin: 0 auto 20px;
+    }
+    .beer-glass {
+        position: absolute;
+        bottom: 0;
+        left: 0;
+        width: 60px;
+        height: 80px;
+        border: 4px solid rgba(255, 255, 255, 0.9);
+        border-top: none;
+        border-radius: 0 0 10px 10px;
+        background: rgba(255, 255, 255, 0.1);
+        overflow: hidden;
+        z-index: 2;
+    }
+    .beer-handle {
+        position: absolute;
+        right: -15px;
+        top: 20px;
+        width: 25px;
+        height: 45px;
+        border: 4px solid rgba(255, 255, 255, 0.9);
+        border-left: none;
+        border-radius: 0 12px 12px 0;
+        z-index: 1;
+    }
+    .beer-liquid {
+        position: absolute;
+        bottom: 0;
+        left: 0;
+        width: 100%;
+        background: linear-gradient(to top, #f59e0b, #fbbf24);
+        transition: height 1.5s cubic-bezier(0.4, 0, 0.2, 1);
+        z-index: 3;
+    }
+    .beer-foam {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 15px;
+        background: #fff;
+        border-radius: 5px;
+        transform: translateY(-8px);
+        transition: bottom 1.5s cubic-bezier(0.4, 0, 0.2, 1);
+        z-index: 4;
+    }
+    .bubbles {
+        position: absolute;
+        bottom: 0;
+        width: 100%;
+        height: 100%;
+        background-image: radial-gradient(rgba(255,255,255,0.4) 2px, transparent 2px);
+        background-size: 10px 10px;
+        animation: rise 3s linear infinite;
+        z-index: 3;
+    }
+    @keyframes rise {
+        0% { background-position: 0 0; }
+        100% { background-position: 0 -100px; }
+    }
   </style>
 </head>
 <body>
@@ -128,9 +195,9 @@
           const response = await fetch(url, options);
           if (!response.ok) {
             if (response.status === 429) {
-                throw new Error("🤖 APIの無料枠制限で息切れしています。1分ほどお待ちください☕");
+                throw new Error("🤖 APIの無料枠制限で少し息切れしています。1分ほど休ませてから再度お試しください☕");
             } else if (response.status === 400) {
-                throw new Error("🔑 APIキーが無効か間違っています。設定を確認してください。");
+                throw new Error("🔑 APIキーが無効か間違っているようです。設定を確認してくださいね。");
             } else {
                 throw new Error(`予期せぬ通信エラーが発生しました(${response.status})。`);
             }
@@ -242,7 +309,7 @@
     }
 
     // ==========================================
-    // エコモード用の自動カット推測アルゴリズム
+    // スマート・エコモード用：自動カット推測アルゴリズム
     // ==========================================
     function calculateSplitTimes(fullBuffer, texts) {
         const count = texts.length;
@@ -430,7 +497,7 @@
       const [localApiKey, setLocalApiKey] = useState('');
       const [showApiKeyModal, setShowApiKeyModal] = useState(false); 
       
-      // ★デフォルトを 'eco' に変更しました
+      // ★デフォルトを 'eco' に
       const [audioMode, setAudioMode] = useState('eco'); 
       const [hasSavedData, setHasSavedData] = useState(false); 
       
@@ -445,6 +512,7 @@
       const [leftPanelWidth, setLeftPanelWidth] = useState(40);
       const [dragActive, setDragActive] = useState(false);
 
+      // 手動エディタ用の状態
       const [fullBuffer, setFullBuffer] = useState(null);
       const [showManualEditor, setShowManualEditor] = useState(false);
       const [manualSplitTimes, setManualSplitTimes] = useState([]);
@@ -454,13 +522,20 @@
       const [editorSeekRatio, setEditorSeekRatio] = useState(0);
       const [editingSplitIdx, setEditingSplitIdx] = useState(-1);
       
+      // 🍺 ビールUI（スマート・エコモード事前確認）用の状態
+      const [showEcoConfirmModal, setShowEcoConfirmModal] = useState(false);
+      const [ecoChunksData, setEcoChunksData] = useState([]);
+      const [totalCharsState, setTotalCharsState] = useState(0);
+      const [beerFillPercentage, setBeerFillPercentage] = useState(0);
+      const API_CHUNK_LIMIT = 2300; // ★安全マージンを取った黄金比の限界値
+
       const activeIdxRef = useRef(-1);
       const isPlayingRef = useRef(false);
       const isSeekingRef = useRef(false);
       const editorAnimRef = useRef(null);
       const editorAudioRef = useRef({ source: null, startTime: 0, offset: 0, duration: 0 });
 
-      // データ復元（localForage）
+      // 安全なデータ復元（localForage）
       useEffect(() => {
         try {
             const savedKey = localStorage.getItem('liteStudioApiKey');
@@ -478,12 +553,16 @@
         }
       }, []);
 
+      // スライドや設定が変わるたびに自動保存
       useEffect(() => {
           if (typeof window.localforage !== 'undefined') {
               if (slides.length > 0) {
                   window.localforage.setItem('liteStudioProject', { slides, voiceName, audioMode })
                       .catch(e => console.warn(e));
-              } 
+              } else {
+                  window.localforage.removeItem('liteStudioProject')
+                      .catch(e => console.warn(e));
+              }
           }
       }, [slides, voiceName, audioMode]);
 
@@ -624,52 +703,115 @@
         }
       };
       // ------------------------------------------------
-      // エコモード：一括生成
+      // 🍺 ビールUI搭載：スマート・エコモード（2300文字自動分割）
       // ------------------------------------------------
-      const generateStockAudioEco = async () => {
-        if (!localApiKey) { setShowApiKeyModal(true); return; }
-        setIsBusy(true); 
-        stopGlobalAudio(); 
-        const ctx = getAudioContext(); 
-        setStatus("エコモードで音声を一括生成中..."); 
-        setProgress(30);
+      const openEcoConfirmModal = () => {
+          if (!localApiKey) { setShowApiKeyModal(true); return; }
+          
+          let totalChars = 0;
+          slides.forEach(s => {
+              totalChars += normalizeText(s.script).length;
+          });
+          setTotalCharsState(totalChars);
 
-        try {
-            const separator = "。\n\n\n\n　　　　　\n\n\n\n"; 
-            const combinedScript = slides.map(s => {
-                let txt = normalizeText(s.script);
-                if(!txt.endsWith("。") && !txt.endsWith("！") && !txt.endsWith("？")) txt += "。";
-                return txt + separator;
-            }).join("");
+          // チャンク（バスの相乗り）計算
+          let chunks = [];
+          let currentChunkChars = 0;
+          let currentChunkSlides = [];
+          
+          slides.forEach((s, idx) => {
+              const textLen = normalizeText(s.script).length;
+              if (currentChunkChars + textLen > API_CHUNK_LIMIT && currentChunkSlides.length > 0) {
+                  chunks.push(currentChunkSlides);
+                  currentChunkChars = 0;
+                  currentChunkSlides = [];
+              }
+              currentChunkSlides.push(idx);
+              currentChunkChars += textLen;
+          });
+          if (currentChunkSlides.length > 0) chunks.push(currentChunkSlides);
+          
+          setEcoChunksData(chunks);
+          setShowEcoConfirmModal(true);
+          
+          // ビールが注がれるアニメーション用の時間差セット
+          setTimeout(() => {
+              const remainder = totalChars % API_CHUNK_LIMIT;
+              const fill = totalChars === 0 ? 0 : (remainder === 0 ? 100 : (remainder / API_CHUNK_LIMIT) * 100);
+              // 2回以上（大作）の場合は満杯（100%）まで注ぐ
+              setBeerFillPercentage(chunks.length > 1 ? 100 : fill);
+          }, 100);
+      };
 
-            const response = await fetchWithBackoff(`${GEMINI_URL}?key=${localApiKey}`, {
-                method: "POST", 
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ 
-                    contents: [{ parts: [{ text: combinedScript }] }], 
-                    generationConfig: { responseModalities: ["AUDIO"], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voiceName } } } },
-                    model: GEMINI_MODEL
-                })
-            });
-            const data = await response.json();
-            const buffer = pcm16ToAudioBuffer(data.candidates[0].content.parts[0].inlineData.data, ctx);
+      const startSmartEcoMode = async () => {
+          setShowEcoConfirmModal(false);
+          setIsBusy(true); 
+          stopGlobalAudio(); 
+          const ctx = getAudioContext(); 
+          setStatus("スマート・エコモードで生成中..."); 
+          setProgress(10);
+          
+          audioStock.clear();
+          setEditorIndividualBuffers(new Map());
+          
+          const separator = "。\n\n\n\n　　　　　\n\n\n\n";
+          let errorOccurred = false;
 
-            setStatus("カットポイントを計算中..."); 
-            setProgress(80);
-            
-            setFullBuffer(buffer); 
-            setEditorIndividualBuffers(new Map()); 
-            setManualSplitTimes(calculateSplitTimes(buffer, slides.map(s => s.script)));
-            
-            setShowManualEditor(true); 
-            toast("音声の生成が完了しました！カット位置を確認してください。", "success");
-        } catch (e) { 
-            toast(e.message, "error"); 
-        } finally { 
-            setIsBusy(false); 
-            setProgress(0); 
-            setStatus(""); 
-        }
+          try {
+              for (let i = 0; i < ecoChunksData.length; i++) {
+                  setStatus(`自動分割生成中... (${i+1}/${ecoChunksData.length}回目)`);
+                  setProgress(10 + (i / ecoChunksData.length) * 80);
+                  
+                  const chunkSlides = ecoChunksData[i];
+                  const combinedScript = chunkSlides.map(idx => {
+                      let txt = normalizeText(slides[idx].script);
+                      if(!txt.endsWith("。") && !txt.endsWith("！") && !txt.endsWith("？")) txt += "。";
+                      return txt + separator;
+                  }).join("");
+
+                  const response = await fetchWithBackoff(`${GEMINI_URL}?key=${localApiKey}`, {
+                      method: "POST", 
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ 
+                          contents: [{ parts: [{ text: combinedScript }] }], 
+                          generationConfig: { responseModalities: ["AUDIO"], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voiceName } } } },
+                          model: GEMINI_MODEL
+                      })
+                  });
+                  const data = await response.json();
+                  const buffer = pcm16ToAudioBuffer(data.candidates[0].content.parts[0].inlineData.data, ctx);
+                  
+                  // このチャンク内のスライドでカット位置を計算
+                  const chunkTexts = chunkSlides.map(idx => slides[idx].script);
+                  const chunkSplitTimes = calculateSplitTimes(buffer, chunkTexts);
+                  
+                  // バッファを切り分けてストックに格納
+                  const splitBufs = splitBufferByTimes(buffer, chunkSplitTimes, chunkSlides.length, ctx);
+                  splitBufs.forEach((b, j) => {
+                      audioStock.set(chunkSlides[j], b);
+                      setEditorIndividualBuffers(prev => { const m = new Map(prev); m.set(chunkSlides[j], b); return m; });
+                  });
+                  
+                  if (i < ecoChunksData.length - 1) await sleep(1000);
+              }
+
+              if (!errorOccurred) {
+                  setProgress(100);
+                  // チャンク化によってズレのリスクが激減したため、手動エディタはスキップし直接出力画面へ。
+                  // （微調整が必要な場合はスライドごとの「更新(単体)」で対応）
+                  setFullBuffer(null); 
+                  setShowManualEditor(false); 
+                  toast("✨ 賢く分割して音声を生成しました！", "success");
+                  setStep(4);
+              }
+              
+          } catch (e) { 
+              toast(e.message, "error"); 
+          } finally { 
+              setIsBusy(false); 
+              setProgress(0); 
+              setStatus(""); 
+          }
       };
 
       // ------------------------------------------------
@@ -816,7 +958,7 @@
       };
 
       // ------------------------------------------------
-      // 最終出力 (MP4エンコード)
+      // 最終出力 (MP4エンコード・金属音完全除去版)
       // ------------------------------------------------
       const exportVideoFromStock = async () => {
           const missing = slides.findIndex((_, i) => !audioStock.has(i) && normalizeText(slides[i].script) !== "");
@@ -877,7 +1019,7 @@
               let videoTimestampUs = 0; 
               let audioTimestampUs = 0;
 
-              // ★金属音の原因だったフィルターを完全に削除。純粋なアップサンプリングのみ行います。
+              // ★金属音の原因だったフィルターを完全に削除！ピュアなアップサンプリングのみ実行。
               async function resampleTo44100Stereo(buffer) {
                   if (!buffer) return null;
                   const OfflineCtx = window.OfflineAudioContext || window.webkitOfflineAudioContext;
@@ -885,7 +1027,7 @@
                   const source = offlineCtx.createBufferSource(); 
                   source.buffer = buffer;
                   
-                  // フィルターを噛ませず、そのまま出力先へ接続します
+                  // 余計なフィルターを通さず、直接出力に繋ぎます
                   source.connect(offlineCtx.destination); 
                   source.start(0);
                   
@@ -1010,33 +1152,23 @@
       };
 
       // ------------------------------------------------
-      // 手動エディタ（エコモード用）の機能群
+      // 手動エディタの機能群（今回は主に単体更新で対応するため非表示推奨）
       // ------------------------------------------------
       const adjustSplitTime = (idx, delta) => {
           setManualSplitTimes(prev => {
               const arr = [...prev];
-              for(let j = idx; j < arr.length; j++) {
-                  arr[j] = Math.max(0, arr[j] + delta);
-              }
-              for(let j = 1; j < arr.length; j++) {
-                  if (arr[j] <= arr[j-1]) arr[j] = arr[j-1] + 0.1;
-              }
+              for(let j = idx; j < arr.length; j++) arr[j] = Math.max(0, arr[j] + delta);
+              for(let j = 1; j < arr.length; j++) if (arr[j] <= arr[j-1]) arr[j] = arr[j-1] + 0.1;
               return arr;
           });
       };
 
       const handleSplitTimeChange = (idx, val) => {
-          let num = parseFloat(val); 
-          if (isNaN(num)) return;
+          let num = parseFloat(val); if (isNaN(num)) return;
           setManualSplitTimes(prev => {
-              const arr = [...prev]; 
-              const delta = num - arr[idx];
-              for(let j = idx; j < arr.length; j++) {
-                  arr[j] = Math.max(0, arr[j] + delta);
-              }
-              for(let j = 1; j < arr.length; j++) {
-                  if (arr[j] <= arr[j-1]) arr[j] = arr[j-1] + 0.1;
-              }
+              const arr = [...prev]; const delta = num - arr[idx];
+              for(let j = idx; j < arr.length; j++) arr[j] = Math.max(0, arr[j] + delta);
+              for(let j = 1; j < arr.length; j++) if (arr[j] <= arr[j-1]) arr[j] = arr[j-1] + 0.1;
               return arr;
           });
       };
@@ -1046,11 +1178,7 @@
           const ctx = getAudioContext();
           const buffers = splitBufferByTimes(fullBuffer, manualSplitTimes, slides.length, ctx);
           audioStock.clear();
-          buffers.forEach((buf, idx) => { 
-              if (idx < slides.length) {
-                  audioStock.set(idx, editorIndividualBuffers.has(idx) ? editorIndividualBuffers.get(idx) : buf); 
-              }
-          });
+          buffers.forEach((buf, idx) => { if (idx < slides.length) audioStock.set(idx, editorIndividualBuffers.has(idx) ? editorIndividualBuffers.get(idx) : buf); });
           setShowManualEditor(false); 
           toast("音声を割り当てました！", "success");
       };
@@ -1082,21 +1210,13 @@
               source.start(0, start + safeOffset, duration - safeOffset); 
           }
           
-          editorAudioRef.current = { 
-              source, 
-              startTime: ctx.currentTime, 
-              offset: startOffsetSec, 
-              duration: duration 
-          };
+          editorAudioRef.current = { source, startTime: ctx.currentTime, offset: startOffsetSec, duration: duration };
           
           const loop = () => {
               if (activeIdxRef.current !== idx || !isPlayingRef.current) return;
               if (!isSeekingRef.current) {
                   const elapsed = ctx.currentTime - editorAudioRef.current.startTime + editorAudioRef.current.offset;
-                  if (elapsed >= duration) { 
-                      updatePlaybackState(idx, false, 1); 
-                      return; 
-                  }
+                  if (elapsed >= duration) { updatePlaybackState(idx, false, 1); return; }
                   setEditorSeekRatio(elapsed / duration);
               }
               editorAnimRef.current = requestAnimationFrame(loop);
@@ -1105,33 +1225,24 @@
       }, [fullBuffer, editorIndividualBuffers, updatePlaybackState]);
 
       const togglePlayPause = (idx, start, end, duration) => {
-          if (activeIdxRef.current === idx && isPlayingRef.current) {
-              pauseEditorSegment();
-          } else {
+          if (activeIdxRef.current === idx && isPlayingRef.current) pauseEditorSegment();
+          else {
               let ratio = 0;
-              if (activeIdxRef.current === idx) {
-                  ratio = editorSeekRatio >= 1 ? 0 : editorSeekRatio;
-              }
+              if (activeIdxRef.current === idx) ratio = editorSeekRatio >= 1 ? 0 : editorSeekRatio;
               startEditorSegment(idx, start, end, duration, ratio);
           }
       };
 
       const handleSeekChange = (idx, ratio) => { 
           isSeekingRef.current = true; 
-          if (activeIdxRef.current !== idx) {
-              updatePlaybackState(idx, false, ratio); 
-          } else {
-              setEditorSeekRatio(ratio); 
-          }
+          if (activeIdxRef.current !== idx) updatePlaybackState(idx, false, ratio); 
+          else setEditorSeekRatio(ratio); 
       };
       
       const handleSeekEnd = (idx, start, end, duration, ratio) => { 
           isSeekingRef.current = false; 
-          if (isPlayingRef.current && activeIdxRef.current === idx) {
-              startEditorSegment(idx, start, end, duration, ratio); 
-          } else {
-              updatePlaybackState(idx, false, ratio); 
-          }
+          if (isPlayingRef.current && activeIdxRef.current === idx) startEditorSegment(idx, start, end, duration, ratio); 
+          else updatePlaybackState(idx, false, ratio); 
       };
 
       // ==========================================
@@ -1149,6 +1260,47 @@
              onMouseUp={() => setIsDraggingSplitter(false)} 
              onMouseLeave={() => setIsDraggingSplitter(false)}>
           
+          {/* 🍺 遊び心満載！スマート・エコモードの事前確認モーダル */}
+          {showEcoConfirmModal && (
+              <div className="absolute inset-0 z-[100] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+                  <div className="glass-panel p-8 rounded-2xl max-w-md w-full shadow-2xl border border-amber-500/30 animate-fade-in flex flex-col items-center">
+                      <h2 className="text-xl font-bold text-white text-center mb-6">🍺 API消費量の確認</h2>
+                      
+                      <div className="beer-glass-container">
+                          <div className="beer-glass">
+                              <div className="beer-liquid" style={{ height: `${beerFillPercentage}%` }}>
+                                  <div className="bubbles"></div>
+                              </div>
+                              <div className="beer-foam" style={{ bottom: `${beerFillPercentage}%`, opacity: beerFillPercentage > 0 ? 1 : 0 }}></div>
+                          </div>
+                          <div className="beer-handle"></div>
+                      </div>
+
+                      <div className="bg-black/50 p-4 rounded-xl w-full mb-6 border border-slate-700">
+                          <div className="flex justify-between mb-2">
+                              <span className="text-slate-400">📊 原稿の総文字数:</span>
+                              <span className="text-white font-bold">{totalCharsState.toLocaleString()} 文字</span>
+                          </div>
+                          <div className="flex justify-between items-center border-t border-slate-700/50 pt-2 mt-2">
+                              <span className="text-slate-400">🎫 予想API消費:</span>
+                              <span className="text-amber-400 font-bold text-lg">{ecoChunksData.length} 回</span>
+                          </div>
+                      </div>
+                      
+                      <p className="text-xs text-slate-400 mb-6 text-center leading-relaxed">
+                          {ecoChunksData.length > 1 
+                              ? "少し大作ですね！安全のため、AIが焦らないように数回に分けて丁寧に読み上げます。" 
+                              : "1回のAPIで完璧に生成できるスマートなボリュームです！"}
+                      </p>
+                      
+                      <div className="flex gap-3 w-full">
+                          <button onClick={()=>setShowEcoConfirmModal(false)} className="flex-1 py-3 rounded-lg bg-slate-800 text-white font-bold hover:bg-slate-700 transition">キャンセル</button>
+                          <button onClick={startSmartEcoMode} className="flex-1 py-3 rounded-lg bg-gradient-to-r from-amber-500 to-orange-500 text-white font-bold hover:from-amber-400 transition shadow-[0_0_15px_rgba(245,158,11,0.4)]">🍻 生成スタート！</button>
+                      </div>
+                  </div>
+              </div>
+          )}
+
           {/* APIキー入力モーダル */}
           {showApiKeyModal && (
               <div className="absolute inset-0 z-[100] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
@@ -1279,7 +1431,7 @@
                         
                         <div className="bg-black/40 p-1.5 rounded-xl flex gap-1 mb-4 border border-slate-700">
                             <button onClick={()=>setAudioMode('eco')} className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all flex flex-col items-center gap-1 ${audioMode==='eco' ? 'bg-emerald-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800'}`}>
-                                <span>🌱 エコモード</span><span className="text-[9px] font-normal opacity-80">一括生成 (API 1回)</span>
+                                <span>🌱 スマート・エコ</span><span className="text-[9px] font-normal opacity-80">自動分割でAPI節約</span>
                             </button>
                             <button onClick={()=>setAudioMode('pro')} className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all flex flex-col items-center gap-1 ${audioMode==='pro' ? 'bg-fuchsia-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800'}`}>
                                 <span>👑 プロモード</span><span className="text-[9px] font-normal opacity-80">個別生成 (ズレなし)</span>
@@ -1294,9 +1446,9 @@
                             )}
                         </div>
                         
-                        <button onClick={audioMode === 'eco' ? generateStockAudioEco : generateStockAudioPro} disabled={isBusy} 
+                        <button onClick={audioMode === 'eco' ? openEcoConfirmModal : generateStockAudioPro} disabled={isBusy} 
                                 className={`w-full font-bold py-3 rounded-lg text-sm shadow-lg flex items-center justify-center gap-2 transition-all transform active:scale-[0.98] disabled:opacity-50 ${audioMode==='eco' ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white' : 'bg-gradient-to-r from-fuchsia-600 to-purple-600 text-white'}`}>
-                            {audioMode === 'eco' ? '🌱 エコモードで音声を一括生成' : '👑 プロモードで全自動生成'}
+                            {audioMode === 'eco' ? '🌱 スマート・エコモードで生成' : '👑 プロモードで全自動生成'}
                         </button>
                         
                         {fullBuffer && audioMode === 'eco' && !showManualEditor && (
@@ -1402,7 +1554,7 @@
               )}
             </div>
 
-            {/* 手動エディタ (エコモード用のみ表示) */}
+            {/* 手動エディタ (表示非推奨だが残してある機能) */}
             {showManualEditor && fullBuffer && audioMode === 'eco' && (
               <div className="absolute inset-0 z-50 bg-black/95 flex flex-col p-6 animate-fade-in backdrop-blur-xl">
                  <div className="flex justify-between items-center mb-6 border-b border-slate-800 pb-4">
