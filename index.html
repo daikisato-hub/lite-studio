@@ -483,10 +483,7 @@
               if (slides.length > 0) {
                   window.localforage.setItem('liteStudioProject', { slides, voiceName, audioMode })
                       .catch(e => console.warn(e));
-              } else {
-                  window.localforage.removeItem('liteStudioProject')
-                      .catch(e => console.warn(e));
-              }
+              } 
           }
       }, [slides, voiceName, audioMode]);
 
