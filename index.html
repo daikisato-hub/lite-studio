@@ -138,7 +138,6 @@
           return response;
         } catch (e) {
           lastError = e;
-          // 400エラー（キー間違い）以外なら自動リトライする
           if (i < delays.length && !e.message.includes("APIキー")) {
               await sleep(delays[i]);
           } else {
@@ -232,11 +231,9 @@
         for (let c = 0; c < channels; c++) {
             const data = buffer.getChannelData(c);
             const len = data.length;
-            // フェードイン
             for (let i = 0; i < fadeLength; i++) {
                 data[i] *= 0.5 * (1 - Math.cos(Math.PI * (i / fadeLength))); 
             }
-            // フェードアウト
             for (let i = 0; i < fadeLength; i++) {
                 data[len - 1 - i] *= 0.5 * (1 - Math.cos(Math.PI * (i / fadeLength)));
             }
@@ -255,7 +252,6 @@
         const sampleRate = fullBuffer.sampleRate;
         const totalDuration = fullBuffer.duration;
 
-        // 文字数と句読点で長さを推測
         const lengths = texts.map(t => {
             const normalized = normalizeText(t);
             const punctuationCount = (normalized.match(/[。！？\.\!\?]/g) || []).length;
@@ -271,7 +267,6 @@
             expectedSplitTimes.push((accLen / totalVirtualLength) * totalDuration);
         }
 
-        // 無音区間を検知
         const silences = [];
         let isSilent = false; 
         let startIdx = 0;
@@ -297,7 +292,6 @@
             silences.push({ start: startIdx, end: channelData.length, midTime: ((startIdx + channelData.length) / 2) / sampleRate });
         }
 
-        // 推測時間と実際の無音区間をマッチング
         const actualSplitTimes = [];
         const usedSilences = new Set();
         
@@ -426,7 +420,6 @@
     function MainApp() {
       const toast = useToast();
       
-      // アプリ全体の状態管理
       const [slides, setSlides] = useState([]);
       const [step, setStep] = useState(1);
       const [jsonText, setJsonText] = useState('');
@@ -437,14 +430,14 @@
       const [localApiKey, setLocalApiKey] = useState('');
       const [showApiKeyModal, setShowApiKeyModal] = useState(false); 
       
-      const [audioMode, setAudioMode] = useState('pro'); // 'eco' or 'pro'
+      // ★デフォルトを 'eco' に変更しました
+      const [audioMode, setAudioMode] = useState('eco'); 
       const [hasSavedData, setHasSavedData] = useState(false); 
       
       const [showSubtitle, setShowSubtitle] = useState(true);
       const [voiceName, setVoiceName] = useState('Kore');
       const [activeSlideIdx, setActiveSlideIdx] = useState(0);
       
-      // UIとドラッグ操作用の状態（★前回消してしまった必須部分です）
       const canvasRef = useRef(null);
       const containerRef = useRef(null);
       const preloadedImagesRef = useRef([]);
@@ -452,7 +445,6 @@
       const [leftPanelWidth, setLeftPanelWidth] = useState(40);
       const [dragActive, setDragActive] = useState(false);
 
-      // 手動エディタ用の状態
       const [fullBuffer, setFullBuffer] = useState(null);
       const [showManualEditor, setShowManualEditor] = useState(false);
       const [manualSplitTimes, setManualSplitTimes] = useState([]);
@@ -468,9 +460,7 @@
       const editorAnimRef = useRef(null);
       const editorAudioRef = useRef({ source: null, startTime: 0, offset: 0, duration: 0 });
 
-      // ------------------------------------------------
-      // 安全なデータ復元（localForage）
-      // ------------------------------------------------
+      // データ復元（localForage）
       useEffect(() => {
         try {
             const savedKey = localStorage.getItem('liteStudioApiKey');
@@ -488,7 +478,6 @@
         }
       }, []);
 
-      // スライドや設定が変わるたびに自動保存
       useEffect(() => {
           if (typeof window.localforage !== 'undefined') {
               if (slides.length > 0) {
@@ -522,9 +511,6 @@
           toast("APIキーをブラウザに安全に保存しました", "success");
       };
 
-      // ------------------------------------------------
-      // 画面描画ロジック
-      // ------------------------------------------------
       const updatePlaybackState = useCallback((idx, isPlaying, ratio) => {
           setEditorActiveIdx(idx); 
           setEditorIsPlaying(isPlaying);
@@ -894,6 +880,7 @@
               let videoTimestampUs = 0; 
               let audioTimestampUs = 0;
 
+              // ★金属音の原因だったフィルターを完全に削除。純粋なアップサンプリングのみ行います。
               async function resampleTo44100Stereo(buffer) {
                   if (!buffer) return null;
                   const OfflineCtx = window.OfflineAudioContext || window.webkitOfflineAudioContext;
@@ -901,12 +888,8 @@
                   const source = offlineCtx.createBufferSource(); 
                   source.buffer = buffer;
                   
-                  const filter = offlineCtx.createBiquadFilter(); 
-                  filter.type = 'lowpass'; 
-                  filter.frequency.value = 10000;
-                  
-                  source.connect(filter); 
-                  filter.connect(offlineCtx.destination); 
+                  // フィルターを噛ませず、そのまま出力先へ接続します
+                  source.connect(offlineCtx.destination); 
                   source.start(0);
                   
                   return await offlineCtx.startRendering();
@@ -1154,9 +1137,9 @@
           }
       };
 
-      // ------------------------------------------------
+      // ==========================================
       // レンダリング (UI)
-      // ------------------------------------------------
+      // ==========================================
       return (
         <div className="h-screen flex flex-col text-sm" 
              onMouseMove={e => { 
