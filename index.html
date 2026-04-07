@@ -103,72 +103,14 @@
         border-radius: 2px; 
     }
 
-    /* 🍺 ビールジョッキのアニメーションCSS */
-    .beer-glass-container {
-        position: relative;
-        width: 70px;
-        height: 90px;
-        margin: 0 auto 20px;
-    }
-    .beer-glass {
-        position: absolute;
-        bottom: 0;
-        left: 0;
-        width: 60px;
-        height: 80px;
-        border: 4px solid rgba(255, 255, 255, 0.9);
-        border-top: none;
-        border-radius: 0 0 10px 10px;
-        background: rgba(255, 255, 255, 0.1);
-        overflow: hidden;
-        z-index: 2;
-    }
-    .beer-handle {
-        position: absolute;
-        right: -15px;
-        top: 20px;
-        width: 25px;
-        height: 45px;
-        border: 4px solid rgba(255, 255, 255, 0.9);
-        border-left: none;
-        border-radius: 0 12px 12px 0;
-        z-index: 1;
-    }
-    .beer-liquid {
-        position: absolute;
-        bottom: 0;
-        left: 0;
-        width: 100%;
-        background: linear-gradient(to top, #f59e0b, #fbbf24);
-        transition: height 1.5s cubic-bezier(0.4, 0, 0.2, 1);
-        z-index: 3;
-    }
-    .beer-foam {
-        position: absolute;
-        top: 0;
-        left: 0;
-        width: 100%;
-        height: 15px;
-        background: #fff;
-        border-radius: 5px;
-        transform: translateY(-8px);
-        transition: bottom 1.5s cubic-bezier(0.4, 0, 0.2, 1);
-        z-index: 4;
-    }
-    .bubbles {
-        position: absolute;
-        bottom: 0;
-        width: 100%;
-        height: 100%;
-        background-image: radial-gradient(rgba(255,255,255,0.4) 2px, transparent 2px);
-        background-size: 10px 10px;
-        animation: rise 3s linear infinite;
-        z-index: 3;
-    }
-    @keyframes rise {
-        0% { background-position: 0 0; }
-        100% { background-position: 0 -100px; }
-    }
+    /* 🍺 ビールジョッキUI */
+    .beer-glass-container { position: relative; width: 70px; height: 90px; margin: 0 auto 20px; }
+    .beer-glass { position: absolute; bottom: 0; left: 0; width: 60px; height: 80px; border: 4px solid rgba(255, 255, 255, 0.9); border-top: none; border-radius: 0 0 10px 10px; background: rgba(255, 255, 255, 0.1); overflow: hidden; z-index: 2; }
+    .beer-handle { position: absolute; right: -15px; top: 20px; width: 25px; height: 45px; border: 4px solid rgba(255, 255, 255, 0.9); border-left: none; border-radius: 0 12px 12px 0; z-index: 1; }
+    .beer-liquid { position: absolute; bottom: 0; left: 0; width: 100%; background: linear-gradient(to top, #f59e0b, #fbbf24); transition: height 1.5s cubic-bezier(0.4, 0, 0.2, 1); z-index: 3; }
+    .beer-foam { position: absolute; top: 0; left: 0; width: 100%; height: 15px; background: #fff; border-radius: 5px; transform: translateY(-8px); transition: bottom 1.5s cubic-bezier(0.4, 0, 0.2, 1); z-index: 4; }
+    .bubbles { position: absolute; bottom: 0; width: 100%; height: 100%; background-image: radial-gradient(rgba(255,255,255,0.4) 2px, transparent 2px); background-size: 10px 10px; animation: rise 3s linear infinite; z-index: 3; }
+    @keyframes rise { 0% { background-position: 0 0; } 100% { background-position: 0 -100px; } }
   </style>
 </head>
 <body>
@@ -183,9 +125,6 @@
     const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     const normalizeText = (t) => (t || "").replace(/\r\n/g, "\n").replace(/\s+/g, " ").trim();
 
-    // ==========================================
-    // 優しいエラーハンドリング（リトライ機能付き）
-    // ==========================================
     const fetchWithBackoff = async (url, options) => {
       const delays = [1000, 2000, 4000]; 
       let lastError;
@@ -194,41 +133,28 @@
         try {
           const response = await fetch(url, options);
           if (!response.ok) {
-            if (response.status === 429) {
-                throw new Error("🤖 APIの無料枠制限で少し息切れしています。1分ほど休ませてから再度お試しください☕");
-            } else if (response.status === 400) {
-                throw new Error("🔑 APIキーが無効か間違っているようです。設定を確認してくださいね。");
-            } else {
-                throw new Error(`予期せぬ通信エラーが発生しました(${response.status})。`);
-            }
+            if (response.status === 429) throw new Error("🤖 APIの無料枠制限で息切れ中です。1分ほどお待ちください☕");
+            else if (response.status === 400) throw new Error("🔑 APIキーが無効か間違っているようです。");
+            else throw new Error(`通信エラーが発生しました(${response.status})。`);
           }
           return response;
         } catch (e) {
           lastError = e;
-          if (i < delays.length && !e.message.includes("APIキー")) {
-              await sleep(delays[i]);
-          } else {
-              throw lastError;
-          }
+          if (i < delays.length && !e.message.includes("APIキー")) await sleep(delays[i]);
+          else throw lastError;
         }
       }
       throw lastError;
     };
 
-    // ==========================================
-    // 通知（トースト）システム
-    // ==========================================
     const ToastContext = React.createContext();
 
     function ToastProvider({ children }) {
         const [toasts, setToasts] = useState([]);
-        
         const addToast = useCallback((msg, type='info') => {
             const id = Date.now() + Math.random();
             setToasts(prev => [...prev, { id, msg, type }]);
-            setTimeout(() => {
-                setToasts(prev => prev.filter(t => t.id !== id));
-            }, type === 'error' ? 8000 : 4000);
+            setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), type === 'error' ? 8000 : 4000);
         }, []);
         
         return (
@@ -246,46 +172,30 @@
     }
     const useToast = () => React.useContext(ToastContext);
 
-    // ==========================================
-    // 音声処理のコアロジック
-    // ==========================================
     const audioStock = new Map(); 
     let globalAudioCtx = null;
     let globalSource = null;
 
     function getAudioContext() {
-        if (!globalAudioCtx) {
-            globalAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
-        }
-        if (globalAudioCtx.state === 'suspended') {
-            globalAudioCtx.resume();
-        }
+        if (!globalAudioCtx) globalAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        if (globalAudioCtx.state === 'suspended') globalAudioCtx.resume();
         return globalAudioCtx;
     }
 
     function stopGlobalAudio() {
-      if (globalSource) { 
-          try { globalSource.stop(); } catch(e){} 
-          globalSource = null; 
-      }
+      if (globalSource) { try { globalSource.stop(); } catch(e){} globalSource = null; }
     }
 
     function pcm16ToAudioBuffer(base64PCM, audioCtx) {
       const binaryString = atob(base64PCM);
       const len = binaryString.length;
       const bytes = new Uint8Array(len);
-      for (let i = 0; i < len; i++) {
-          bytes[i] = binaryString.charCodeAt(i);
-      }
+      for (let i = 0; i < len; i++) bytes[i] = binaryString.charCodeAt(i);
       const view = new DataView(bytes.buffer);
       const numSamples = Math.floor(len / 2);
       const samples = new Float32Array(numSamples);
-      
       const VOLUME_NORMALIZER = 0.85; 
-      for (let i = 0; i < numSamples; i++) {
-        samples[i] = (view.getInt16(i * 2, true) / 32768.0) * VOLUME_NORMALIZER;
-      }
-      
+      for (let i = 0; i < numSamples; i++) samples[i] = (view.getInt16(i * 2, true) / 32768.0) * VOLUME_NORMALIZER;
       const buffer = audioCtx.createBuffer(1, samples.length, 24000);
       buffer.getChannelData(0).set(samples);
       return buffer;
@@ -294,27 +204,32 @@
     function applyFadeInOut(buffer, ctx) {
         const channels = buffer.numberOfChannels;
         const fadeLength = Math.min(buffer.length / 2, Math.floor(0.015 * buffer.sampleRate)); 
-        
         for (let c = 0; c < channels; c++) {
             const data = buffer.getChannelData(c);
             const len = data.length;
-            for (let i = 0; i < fadeLength; i++) {
-                data[i] *= 0.5 * (1 - Math.cos(Math.PI * (i / fadeLength))); 
-            }
-            for (let i = 0; i < fadeLength; i++) {
-                data[len - 1 - i] *= 0.5 * (1 - Math.cos(Math.PI * (i / fadeLength)));
-            }
+            for (let i = 0; i < fadeLength; i++) data[i] *= 0.5 * (1 - Math.cos(Math.PI * (i / fadeLength))); 
+            for (let i = 0; i < fadeLength; i++) data[len - 1 - i] *= 0.5 * (1 - Math.cos(Math.PI * (i / fadeLength)));
         }
         return buffer;
     }
 
-    // ==========================================
-    // スマート・エコモード用：自動カット推測アルゴリズム
-    // ==========================================
+    // 複数バッファを1つの長いバッファに結合する関数（エディタ復活のため）
+    function concatAudioBuffers(buffers, ctx) {
+        if (!buffers || buffers.length === 0) return null;
+        let totalLength = 0;
+        buffers.forEach(b => { totalLength += b.length; });
+        const result = ctx.createBuffer(1, totalLength, buffers[0].sampleRate);
+        let offset = 0;
+        buffers.forEach(b => {
+            result.getChannelData(0).set(b.getChannelData(0), offset);
+            offset += b.length;
+        });
+        return result;
+    }
+
     function calculateSplitTimes(fullBuffer, texts) {
         const count = texts.length;
         if (count <= 1) return [];
-        
         const channelData = fullBuffer.getChannelData(0);
         const sampleRate = fullBuffer.sampleRate;
         const totalDuration = fullBuffer.duration;
@@ -335,55 +250,35 @@
         }
 
         const silences = [];
-        let isSilent = false; 
-        let startIdx = 0;
-        
+        let isSilent = false; let startIdx = 0;
         for (let i = 0; i < channelData.length; i++) {
             if (Math.abs(channelData[i]) < 0.01) {
-                if (!isSilent) { 
-                    isSilent = true; 
-                    startIdx = i; 
-                }
+                if (!isSilent) { isSilent = true; startIdx = i; }
             } else {
                 if (isSilent) {
                     isSilent = false;
                     const duration = (i - startIdx) / sampleRate;
-                    if (duration >= 0.2) {
-                        silences.push({ start: startIdx, end: i, midTime: ((startIdx + i) / 2) / sampleRate });
-                    }
+                    if (duration >= 0.2) silences.push({ start: startIdx, end: i, midTime: ((startIdx + i) / 2) / sampleRate });
                 }
             }
         }
-        
         if (isSilent && (channelData.length - startIdx) / sampleRate >= 0.2) {
             silences.push({ start: startIdx, end: channelData.length, midTime: ((startIdx + channelData.length) / 2) / sampleRate });
         }
 
         const actualSplitTimes = [];
         const usedSilences = new Set();
-        
         for (let i = 0; i < expectedSplitTimes.length; i++) {
             const expectedTime = expectedSplitTimes[i];
-            let bestSilence = null; 
-            let minDiff = Infinity;
-            
+            let bestSilence = null; let minDiff = Infinity;
             for (let j = 0; j < silences.length; j++) {
                 if (usedSilences.has(j)) continue;
                 const diff = Math.abs(silences[j].midTime - expectedTime);
-                if (diff < minDiff && diff < 5.0) { 
-                    minDiff = diff; 
-                    bestSilence = { silence: silences[j], index: j }; 
-                }
+                if (diff < minDiff && diff < 5.0) { minDiff = diff; bestSilence = { silence: silences[j], index: j }; }
             }
-            
-            if (bestSilence) { 
-                usedSilences.add(bestSilence.index); 
-                actualSplitTimes.push(bestSilence.silence.midTime); 
-            } else {
-                actualSplitTimes.push(expectedTime);
-            }
+            if (bestSilence) { usedSilences.add(bestSilence.index); actualSplitTimes.push(bestSilence.silence.midTime); } 
+            else actualSplitTimes.push(expectedTime);
         }
-        
         actualSplitTimes.sort((a, b) => a - b);
         return actualSplitTimes;
     }
@@ -393,7 +288,6 @@
         const channelData = fullBuffer.getChannelData(0);
         const buffers = [];
         let startSec = 0;
-        
         for (let i = 0; i < slidesCount; i++) {
             let endSec = i < times.length ? times[i] : Math.max(fullBuffer.duration, startSec + 3.0);
             if (endSec > fullBuffer.duration + 5.0) endSec = fullBuffer.duration + 5.0;
@@ -408,27 +302,18 @@
             const actualStart = Math.min(channelData.length, Math.max(0, copyStartSample));
             const actualEnd = Math.min(channelData.length, Math.max(0, copyEndSample));
             
-            if (actualEnd - actualStart > 0) {
-                newData.set(channelData.subarray(actualStart, actualStart + Math.min(actualEnd - actualStart, durationSamples)), 0);
-            }
+            if (actualEnd - actualStart > 0) newData.set(channelData.subarray(actualStart, actualStart + Math.min(actualEnd - actualStart, durationSamples)), 0);
             buffers.push(applyFadeInOut(buf, ctx));
             startSec = endSec;
         }
         return buffers;
     }
 
-    // ==========================================
-    // 画像・字幕・PDFの処理
-    // ==========================================
     const preloadImages = async (slides) => {
         const loadedImages = [];
         for (const s of slides) {
-            const img = new Image();
-            img.src = s.imageDataUrl;
-            await new Promise((resolve, reject) => { 
-                img.onload = () => resolve(); 
-                img.onerror = () => reject(new Error(`Slide ${s.id} error`)); 
-            });
+            const img = new Image(); img.src = s.imageDataUrl;
+            await new Promise((resolve, reject) => { img.onload = resolve; img.onerror = () => reject(new Error(`Slide ${s.id} error`)); });
             loadedImages.push(img);
         }
         return loadedImages;
@@ -438,18 +323,15 @@
       if (!text) return [];
       let parts = text.split(/([。！？\.!?、,])/g);
       let chunks = [];
-      
       for(let i = 0; i < parts.length; i += 2) {
           let sentence = parts[i] + (parts[i+1] || "");
           if(!sentence.trim()) continue;
           chunks.push(sentence);
       }
-      
       const refined = [];
       for (const seg of chunks) {
-        if (seg.length <= 35) {
-            refined.push(seg);
-        } else {
+        if (seg.length <= 35) refined.push(seg);
+        else {
           let remaining = seg;
           while (remaining.length > 0) {
             let cutIdx = 35;
@@ -467,14 +349,12 @@
       const arrayBuffer = await file.arrayBuffer();
       const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
       const slides = [];
-      
       for (let i = 1; i <= pdf.numPages; i++) {
         const page = await pdf.getPage(i);
         const viewport = page.getViewport({ scale: 2.0 }); 
         const canvas = document.createElement('canvas');
         const ctx = canvas.getContext('2d');
-        canvas.width = viewport.width; 
-        canvas.height = viewport.height;
+        canvas.width = viewport.width; canvas.height = viewport.height;
         await page.render({ canvasContext: ctx, viewport }).promise;
         slides.push({ id: i, imageDataUrl: canvas.toDataURL('image/jpeg', 0.8), script: '' });
       }
@@ -482,7 +362,7 @@
     }
 
     // ==========================================
-    // MainApp コンポーネント
+    // MainApp
     // ==========================================
     function MainApp() {
       const toast = useToast();
@@ -496,8 +376,6 @@
 
       const [localApiKey, setLocalApiKey] = useState('');
       const [showApiKeyModal, setShowApiKeyModal] = useState(false); 
-      
-      // ★デフォルトを 'eco' に
       const [audioMode, setAudioMode] = useState('eco'); 
       const [hasSavedData, setHasSavedData] = useState(false); 
       
@@ -505,6 +383,9 @@
       const [voiceName, setVoiceName] = useState('Kore');
       const [activeSlideIdx, setActiveSlideIdx] = useState(0);
       
+      // ★リカバリー・エコ生成用：選択されたスライドの管理
+      const [selectedSlidesForRegen, setSelectedSlidesForRegen] = useState(new Set());
+
       const canvasRef = useRef(null);
       const containerRef = useRef(null);
       const preloadedImagesRef = useRef([]);
@@ -512,7 +393,6 @@
       const [leftPanelWidth, setLeftPanelWidth] = useState(40);
       const [dragActive, setDragActive] = useState(false);
 
-      // 手動エディタ用の状態
       const [fullBuffer, setFullBuffer] = useState(null);
       const [showManualEditor, setShowManualEditor] = useState(false);
       const [manualSplitTimes, setManualSplitTimes] = useState([]);
@@ -522,12 +402,11 @@
       const [editorSeekRatio, setEditorSeekRatio] = useState(0);
       const [editingSplitIdx, setEditingSplitIdx] = useState(-1);
       
-      // 🍺 ビールUI（スマート・エコモード事前確認）用の状態
       const [showEcoConfirmModal, setShowEcoConfirmModal] = useState(false);
       const [ecoChunksData, setEcoChunksData] = useState([]);
       const [totalCharsState, setTotalCharsState] = useState(0);
       const [beerFillPercentage, setBeerFillPercentage] = useState(0);
-      const API_CHUNK_LIMIT = 2300; // ★安全マージンを取った黄金比の限界値
+      const API_CHUNK_LIMIT = 2300; 
 
       const activeIdxRef = useRef(-1);
       const isPlayingRef = useRef(false);
@@ -535,7 +414,7 @@
       const editorAnimRef = useRef(null);
       const editorAudioRef = useRef({ source: null, startTime: 0, offset: 0, duration: 0 });
 
-      // 安全なデータ復元（localForage）
+      // 💾 バグ修正：安全なデータ読み込み
       useEffect(() => {
         try {
             const savedKey = localStorage.getItem('liteStudioApiKey');
@@ -543,42 +422,47 @@
 
             if (typeof window.localforage !== 'undefined') {
                 window.localforage.getItem('liteStudioProject').then(data => {
-                    if (data && data.slides && data.slides.length > 0) {
+                    // データが本当に存在し、壊れていないか厳密にチェック
+                    if (data && data.slides && Array.isArray(data.slides) && data.slides.length > 0) {
                         setHasSavedData(true);
+                    } else if (data) {
+                        // 壊れたデータは掃除しておく
+                        window.localforage.removeItem('liteStudioProject');
                     }
                 }).catch(e => console.warn("localforage error", e));
             }
-        } catch(e) { 
-            console.warn("Storage access restricted", e); 
-        }
+        } catch(e) { console.warn("Storage access restricted", e); }
       }, []);
-
-      // スライドや設定が変わるたびに自動保存
-      useEffect(() => {
-          if (typeof window.localforage !== 'undefined') {
-              if (slides.length > 0) {
-                  window.localforage.setItem('liteStudioProject', { slides, voiceName, audioMode })
-                      .catch(e => console.warn(e));
-              } else {
-                  window.localforage.removeItem('liteStudioProject')
-                      .catch(e => console.warn(e));
-              }
-          }
-      }, [slides, voiceName, audioMode]);
 
       const loadSavedData = async () => {
           if (typeof window.localforage !== 'undefined') {
-              const data = await window.localforage.getItem('liteStudioProject');
-              if (data) {
-                  setSlides(data.slides);
-                  if(data.voiceName) setVoiceName(data.voiceName);
-                  if(data.audioMode) setAudioMode(data.audioMode);
-                  setStep(3); 
+              try {
+                  const data = await window.localforage.getItem('liteStudioProject');
+                  if (data && data.slides && Array.isArray(data.slides) && data.slides.length > 0) {
+                      setSlides(data.slides);
+                      if(data.voiceName) setVoiceName(data.voiceName);
+                      if(data.audioMode) setAudioMode(data.audioMode);
+                      setStep(3); 
+                      setHasSavedData(false);
+                      toast("前回の作業データを復元しました", "success");
+                  } else {
+                      throw new Error("保存データが空か破損しています");
+                  }
+              } catch(e) {
+                  toast("データの復元に失敗しました。破棄して新規作成してください。", "error");
+                  window.localforage.removeItem('liteStudioProject');
                   setHasSavedData(false);
-                  toast("前回の作業データを復元しました", "success");
               }
           }
       };
+
+      // 自動保存：スライドが0枚の時は絶対に保存処理を走らせない
+      useEffect(() => {
+          if (typeof window.localforage !== 'undefined' && slides.length > 0) {
+              window.localforage.setItem('liteStudioProject', { slides, voiceName, audioMode })
+                  .catch(e => console.warn(e));
+          }
+      }, [slides, voiceName, audioMode]);
 
       const saveApiKey = (key) => {
           setLocalApiKey(key);
@@ -588,88 +472,64 @@
       };
 
       const updatePlaybackState = useCallback((idx, isPlaying, ratio) => {
-          setEditorActiveIdx(idx); 
-          setEditorIsPlaying(isPlaying);
+          setEditorActiveIdx(idx); setEditorIsPlaying(isPlaying);
           if (ratio !== undefined) setEditorSeekRatio(ratio);
-          activeIdxRef.current = idx; 
-          isPlayingRef.current = isPlaying;
+          activeIdxRef.current = idx; isPlayingRef.current = isPlaying;
       }, []);
 
       const drawSlideSync = useCallback((slideIdx, subtitleText = "") => {
-        const canvas = canvasRef.current;
-        if (!canvas) return;
+        const canvas = canvasRef.current; if (!canvas) return;
         const ctx = canvas.getContext('2d');
         const img = preloadedImagesRef.current[slideIdx];
         
-        ctx.fillStyle = "#000"; 
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = "#000"; ctx.fillRect(0, 0, canvas.width, canvas.height);
         
         let imgX, imgY, imgW, imgH;
-        
         if (showSubtitle) {
             const areaH = canvas.height * 0.8;
             if (img) {
                 const scale = Math.min(canvas.width / img.width, areaH / img.height);
-                imgW = img.width * scale; 
-                imgH = img.height * scale;
-                imgX = (canvas.width - imgW) / 2; 
-                imgY = 20 + (areaH - imgH) / 2;
+                imgW = img.width * scale; imgH = img.height * scale;
+                imgX = (canvas.width - imgW) / 2; imgY = 20 + (areaH - imgH) / 2;
             }
         } else {
-            const areaH = canvas.height; 
-            const areaW = canvas.width;
+            const areaH = canvas.height; const areaW = canvas.width;
             if (img) {
                 const scale = Math.min((areaW * 0.95) / img.width, (areaH * 0.95) / img.height);
-                imgW = img.width * scale; 
-                imgH = img.height * scale;
-                imgX = (areaW - imgW) / 2; 
-                imgY = (areaH - imgH) / 2;
+                imgW = img.width * scale; imgH = img.height * scale;
+                imgX = (areaW - imgW) / 2; imgY = (areaH - imgH) / 2;
             }
         }
 
-        if (img) {
-            ctx.drawImage(img, imgX, imgY, imgW, imgH);
-        } else if (slides[slideIdx]) {
-            const tmp = new Image(); 
-            tmp.src = slides[slideIdx].imageDataUrl;
-            tmp.onload = () => drawSlideSync(slideIdx, subtitleText); 
-            return;
+        if (img) ctx.drawImage(img, imgX, imgY, imgW, imgH);
+        else if (slides[slideIdx]) {
+            const tmp = new Image(); tmp.src = slides[slideIdx].imageDataUrl;
+            tmp.onload = () => drawSlideSync(slideIdx, subtitleText); return;
         }
 
         if (showSubtitle && subtitleText) {
             const subH = canvas.height * 0.16;
-            ctx.fillStyle = "rgba(0,0,0,0.85)"; 
-            ctx.fillRect(40, canvas.height - subH - 30, canvas.width - 80, subH);
-            ctx.fillStyle = "#fff"; 
-            ctx.textAlign = "center"; 
-            ctx.textBaseline = "middle";
+            ctx.fillStyle = "rgba(0,0,0,0.85)"; ctx.fillRect(40, canvas.height - subH - 30, canvas.width - 80, subH);
+            ctx.fillStyle = "#fff"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
             ctx.font = subtitleText.length > 25 ? "bold 40px 'Noto Sans JP'" : "bold 52px 'Noto Sans JP'";
             ctx.fillText(subtitleText, canvas.width / 2, canvas.height - 30 - (subH / 2));
         }
       }, [slides, showSubtitle]); 
 
       useEffect(() => {
-        if (slides.length > 0 && !isBusy) {
-            drawSlideSync(activeSlideIdx, splitForSubtitles(slides[activeSlideIdx].script)[0] || "");
-        }
+        if (slides.length > 0 && !isBusy) drawSlideSync(activeSlideIdx, splitForSubtitles(slides[activeSlideIdx].script)[0] || "");
       }, [activeSlideIdx, slides, drawSlideSync, isBusy]);
 
       const handleDrop = async (e) => {
-        e.preventDefault(); 
-        e.stopPropagation(); 
-        setDragActive(false);
+        e.preventDefault(); e.stopPropagation(); setDragActive(false);
         if (e.dataTransfer.files && e.dataTransfer.files[0] && e.dataTransfer.files[0].type === "application/pdf") {
             setStatus("PDF読込中...");
+            setSlides([]); // 🐛 クラッシュ対策：新規読み込み前に一旦リセット
+            audioStock.clear();
             try { 
                 setSlides(await renderSlidesFromPdf(e.dataTransfer.files[0])); 
-                setStep(2); 
-                setStatus(""); 
-                toast("PDF読込完了", "success"); 
-            } 
-            catch(err) { 
-                toast(err.message, "error"); 
-                setStatus("エラー"); 
-            }
+                setStep(2); setStatus(""); toast("PDF読込完了", "success"); 
+            } catch(err) { toast(err.message, "error"); setStatus("エラー"); }
         }
       };
 
@@ -683,24 +543,24 @@
           list.forEach((item, idx) => { 
               const targetIndex = item.slide ? parseInt(item.slide) - 1 : idx; 
               if (targetIndex >= 0 && targetIndex < newSlides.length && newSlides[targetIndex]) { 
-                  newSlides[targetIndex].script = item.script || ""; 
-                  successCount++; 
-              } else {
-                  outOfRangeCount++; 
-              }
+                  newSlides[targetIndex].script = item.script || ""; successCount++; 
+              } else outOfRangeCount++; 
           });
           
-          setSlides(newSlides); 
-          setStep(3);
-          
-          if (outOfRangeCount > 0) {
-              toast(`✅ 成功: ${successCount}件\n⚠️ 未反映: ${outOfRangeCount}件`, "error"); 
-          } else {
-              toast(`✅ ${successCount}件の適用が完了しました`, "success");
-          }
-        } catch (err) { 
-            toast("JSONエラー: " + err.message, "error"); 
-        }
+          setSlides(newSlides); setStep(3);
+          if (outOfRangeCount > 0) toast(`✅ 成功: ${successCount}件\n⚠️ 未反映: ${outOfRangeCount}件`, "error"); 
+          else toast(`✅ ${successCount}件の適用が完了しました`, "success");
+        } catch (err) { toast("JSONエラー: " + err.message, "error"); }
+      };
+
+      // ★追加：チェックボックスの切り替えハンドラー
+      const toggleSlideSelection = (idx) => {
+          setSelectedSlidesForRegen(prev => {
+              const newSet = new Set(prev);
+              if (newSet.has(idx)) newSet.delete(idx);
+              else newSet.add(idx);
+              return newSet;
+          });
       };
       // ------------------------------------------------
       // 🍺 ビールUI搭載：スマート・エコモード（2300文字自動分割）
@@ -734,11 +594,10 @@
           setEcoChunksData(chunks);
           setShowEcoConfirmModal(true);
           
-          // ビールが注がれるアニメーション用の時間差セット
+          // ビールが注がれるアニメーション
           setTimeout(() => {
               const remainder = totalChars % API_CHUNK_LIMIT;
               const fill = totalChars === 0 ? 0 : (remainder === 0 ? 100 : (remainder / API_CHUNK_LIMIT) * 100);
-              // 2回以上（大作）の場合は満杯（100%）まで注ぐ
               setBeerFillPercentage(chunks.length > 1 ? 100 : fill);
           }, 100);
       };
@@ -756,6 +615,7 @@
           
           const separator = "。\n\n\n\n　　　　　\n\n\n\n";
           let errorOccurred = false;
+          let allGeneratedBuffers = []; // ✂️ エディタ復活用のバッファ収集配列
 
           try {
               for (let i = 0; i < ecoChunksData.length; i++) {
@@ -779,17 +639,22 @@
                       })
                   });
                   const data = await response.json();
+                  
+                  // 🐛 バグ修正：AIが空っぽの返事をしてきた時のバリア
+                  if (!data.candidates || !data.candidates[0].content.parts || !data.candidates[0].content.parts[0].inlineData) {
+                      throw new Error("🤖 AIが音声の生成を拒否しました。（安全フィルターの作動、またはサーバーの不調の可能性があります）");
+                  }
+
                   const buffer = pcm16ToAudioBuffer(data.candidates[0].content.parts[0].inlineData.data, ctx);
                   
-                  // このチャンク内のスライドでカット位置を計算
                   const chunkTexts = chunkSlides.map(idx => slides[idx].script);
                   const chunkSplitTimes = calculateSplitTimes(buffer, chunkTexts);
                   
-                  // バッファを切り分けてストックに格納
                   const splitBufs = splitBufferByTimes(buffer, chunkSplitTimes, chunkSlides.length, ctx);
                   splitBufs.forEach((b, j) => {
                       audioStock.set(chunkSlides[j], b);
                       setEditorIndividualBuffers(prev => { const m = new Map(prev); m.set(chunkSlides[j], b); return m; });
+                      allGeneratedBuffers.push(b);
                   });
                   
                   if (i < ecoChunksData.length - 1) await sleep(1000);
@@ -797,13 +662,88 @@
 
               if (!errorOccurred) {
                   setProgress(100);
-                  // チャンク化によってズレのリスクが激減したため、手動エディタはスキップし直接出力画面へ。
-                  // （微調整が必要な場合はスライドごとの「更新(単体)」で対応）
-                  setFullBuffer(null); 
-                  setShowManualEditor(false); 
-                  toast("✨ 賢く分割して音声を生成しました！", "success");
-                  setStep(4);
+                  // ✂️ エディタの完全復活ロジック：バラバラの音声を1つに結合してエディタに渡す
+                  const combinedFullBuffer = concatAudioBuffers(allGeneratedBuffers, ctx);
+                  setFullBuffer(combinedFullBuffer);
+                  
+                  let acc = 0;
+                  let newSplitTimes = [];
+                  allGeneratedBuffers.forEach((b, i) => {
+                      if (i < allGeneratedBuffers.length - 1) {
+                          acc += b.duration;
+                          newSplitTimes.push(acc);
+                      }
+                  });
+                  setManualSplitTimes(newSplitTimes);
+                  
+                  setShowManualEditor(true); 
+                  toast("✨ 賢く分割して音声を生成しました！カット位置を確認してください。", "success");
               }
+              
+          } catch (e) { 
+              toast(e.message, "error"); 
+          } finally { 
+              setIsBusy(false); 
+              setProgress(0); 
+              setStatus(""); 
+          }
+      };
+
+      // ------------------------------------------------
+      // ☑️ 新機能：リカバリー・エコモード（選択したスライドの一括生成）
+      // ------------------------------------------------
+      const startRecoveryEcoMode = async () => {
+          if (!localApiKey) { setShowApiKeyModal(true); return; }
+          if (selectedSlidesForRegen.size === 0) return;
+          
+          setIsBusy(true); 
+          stopGlobalAudio(); 
+          const ctx = getAudioContext(); 
+          setStatus("選択したスライドを一括再生成中..."); 
+          setProgress(30);
+          
+          const targetIndices = Array.from(selectedSlidesForRegen).sort((a, b) => a - b);
+          const separator = "。\n\n\n\n　　　　　\n\n\n\n";
+
+          try {
+              const combinedScript = targetIndices.map(idx => {
+                  let txt = normalizeText(slides[idx].script);
+                  if(!txt.endsWith("。") && !txt.endsWith("！") && !txt.endsWith("？")) txt += "。";
+                  return txt + separator;
+              }).join("");
+
+              const response = await fetchWithBackoff(`${GEMINI_URL}?key=${localApiKey}`, {
+                  method: "POST", 
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ 
+                      contents: [{ parts: [{ text: combinedScript }] }], 
+                      generationConfig: { responseModalities: ["AUDIO"], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voiceName } } } },
+                      model: GEMINI_MODEL
+                  })
+              });
+              const data = await response.json();
+              
+              // 🐛 バグ修正バリア
+              if (!data.candidates || !data.candidates[0].content.parts || !data.candidates[0].content.parts[0].inlineData) {
+                  throw new Error("🤖 AIが音声の生成を拒否しました。（安全フィルターの作動、またはサーバーの不調の可能性があります）");
+              }
+
+              const buffer = pcm16ToAudioBuffer(data.candidates[0].content.parts[0].inlineData.data, ctx);
+              
+              const targetTexts = targetIndices.map(idx => slides[idx].script);
+              const splitTimes = calculateSplitTimes(buffer, targetTexts);
+              const splitBufs = splitBufferByTimes(buffer, splitTimes, targetIndices.length, ctx);
+              
+              // 生成した音声をストックの「該当箇所のみ」に上書き
+              splitBufs.forEach((b, j) => {
+                  const slideIdx = targetIndices[j];
+                  audioStock.set(slideIdx, b);
+                  setEditorIndividualBuffers(prev => { const m = new Map(prev); m.set(slideIdx, b); return m; });
+              });
+
+              setProgress(100);
+              toast(`✨ ${targetIndices.length}枚のスライドを一括で上書き更新しました！`, "success");
+              setSelectedSlidesForRegen(new Set()); // チェックをクリア
               
           } catch (e) { 
               toast(e.message, "error"); 
@@ -847,6 +787,11 @@
                     })
                 });
                 const data = await response.json();
+                
+                if (!data.candidates || !data.candidates[0].content.parts || !data.candidates[0].content.parts[0].inlineData) {
+                    throw new Error("AIが音声の生成を拒否しました。");
+                }
+
                 const buffer = pcm16ToAudioBuffer(data.candidates[0].content.parts[0].inlineData.data, ctx);
                 applyFadeInOut(buffer, ctx);
                 
@@ -896,6 +841,11 @@
                   }) 
               });
               const data = await response.json(); 
+              
+              if (!data.candidates || !data.candidates[0].content.parts || !data.candidates[0].content.parts[0].inlineData) {
+                  throw new Error("AIが音声の生成を拒否しました。");
+              }
+
               const buffer = pcm16ToAudioBuffer(data.candidates[0].content.parts[0].inlineData.data, ctx);
               applyFadeInOut(buffer, ctx); 
               
@@ -931,6 +881,11 @@
                   }) 
               });
               const data = await response.json(); 
+              
+              if (!data.candidates || !data.candidates[0].content.parts || !data.candidates[0].content.parts[0].inlineData) {
+                  throw new Error("AIが音声の生成を拒否しました。");
+              }
+
               const buffer = pcm16ToAudioBuffer(data.candidates[0].content.parts[0].inlineData.data, ctx);
               applyFadeInOut(buffer, ctx); 
               
@@ -1019,18 +974,14 @@
               let videoTimestampUs = 0; 
               let audioTimestampUs = 0;
 
-              // ★金属音の原因だったフィルターを完全に削除！ピュアなアップサンプリングのみ実行。
               async function resampleTo44100Stereo(buffer) {
                   if (!buffer) return null;
                   const OfflineCtx = window.OfflineAudioContext || window.webkitOfflineAudioContext;
                   const offlineCtx = new OfflineCtx(2, Math.ceil(buffer.duration * TARGET_SAMPLE_RATE), TARGET_SAMPLE_RATE);
                   const source = offlineCtx.createBufferSource(); 
                   source.buffer = buffer;
-                  
-                  // 余計なフィルターを通さず、直接出力に繋ぎます
                   source.connect(offlineCtx.destination); 
                   source.start(0);
-                  
                   return await offlineCtx.startRendering();
               }
 
@@ -1152,7 +1103,7 @@
       };
 
       // ------------------------------------------------
-      // 手動エディタの機能群（今回は主に単体更新で対応するため非表示推奨）
+      // 手動エディタ
       // ------------------------------------------------
       const adjustSplitTime = (idx, delta) => {
           setManualSplitTimes(prev => {
@@ -1289,7 +1240,7 @@
                       
                       <p className="text-xs text-slate-400 mb-6 text-center leading-relaxed">
                           {ecoChunksData.length > 1 
-                              ? "少し大作ですね！安全のため、AIが焦らないように数回に分けて丁寧に読み上げます。" 
+                              ? "少し大作ですね！AIが焦らないように数回に分けて丁寧に読み上げます。" 
                               : "1回のAPIで完璧に生成できるスマートなボリュームです！"}
                       </p>
                       
@@ -1363,7 +1314,7 @@
                             <div className="text-3xl mb-2">💾</div>
                             <h3 className="font-bold text-emerald-400 mb-4">前回の作業データが見つかりました</h3>
                             <div className="flex gap-3 justify-center">
-                                <button onClick={()=>{ if(typeof window.localforage!=='undefined') window.localforage.removeItem('liteStudioProject'); setHasSavedData(false);}} className="px-4 py-2 text-xs text-slate-400 hover:text-white border border-slate-700 rounded-lg hover:bg-slate-800">破棄する</button>
+                                <button onClick={()=>{ if(typeof window.localforage!=='undefined') window.localforage.removeItem('liteStudioProject'); setHasSavedData(false); setSlides([]);}} className="px-4 py-2 text-xs text-slate-400 hover:text-white border border-slate-700 rounded-lg hover:bg-slate-800">破棄する</button>
                                 <button onClick={loadSavedData} className="px-6 py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-500 rounded-lg shadow-lg">続きから再開する</button>
                             </div>
                         </div>
@@ -1382,6 +1333,7 @@
                                onChange={async (e)=>{ 
                                    if(e.target.files[0]) { 
                                        setStatus("PDFレンダリング中..."); 
+                                       setSlides([]); audioStock.clear();
                                        try { 
                                            setSlides(await renderSlidesFromPdf(e.target.files[0])); 
                                            setStep(2); 
@@ -1450,24 +1402,44 @@
                                 className={`w-full font-bold py-3 rounded-lg text-sm shadow-lg flex items-center justify-center gap-2 transition-all transform active:scale-[0.98] disabled:opacity-50 ${audioMode==='eco' ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white' : 'bg-gradient-to-r from-fuchsia-600 to-purple-600 text-white'}`}>
                             {audioMode === 'eco' ? '🌱 スマート・エコモードで生成' : '👑 プロモードで全自動生成'}
                         </button>
+
+                        {/* ☑️ リカバリー一括生成ボタン（選択時のみ出現） */}
+                        {selectedSlidesForRegen.size > 0 && (
+                            <div className="mt-3 p-3 bg-indigo-900/30 border border-indigo-500/50 rounded-xl animate-fade-in flex flex-col gap-2">
+                                <div className="text-[10px] text-indigo-200">
+                                    <span className="font-bold text-indigo-400">{selectedSlidesForRegen.size}枚</span> のスライドが選択されています
+                                </div>
+                                <button onClick={startRecoveryEcoMode} disabled={isBusy} 
+                                        className="w-full bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-500 text-white font-bold py-2 rounded-lg text-xs shadow-lg transition-all">
+                                    ♻️ 選択したスライドを一括再生成 (API 1回)
+                                </button>
+                            </div>
+                        )}
                         
                         {fullBuffer && audioMode === 'eco' && !showManualEditor && (
-                            <button onClick={()=>setShowManualEditor(true)} className="w-full mt-3 bg-slate-800 text-emerald-400 font-bold py-2 rounded-lg text-xs border border-emerald-500/30 transition-colors">✂️ エディタを再表示</button>
+                            <button onClick={()=>setShowManualEditor(true)} className="w-full mt-3 bg-slate-800 text-emerald-400 font-bold py-2 rounded-lg text-xs border border-emerald-500/30 transition-colors hover:bg-slate-700">✂️ 手動エディタを開く</button>
                         )}
                     </div>
                     
                     <div className="space-y-3 pb-20">
                       {slides.map((s, i) => {
                         const hasStock = audioStock.has(i);
+                        const isSelected = selectedSlidesForRegen.has(i);
                         return (
-                          <div key={i} onClick={()=>setActiveSlideIdx(i)} className={`glass-panel p-3 rounded-xl border transition-all cursor-pointer flex gap-4 group ${activeSlideIdx === i ? 'border-fuchsia-500 bg-fuchsia-900/10' : 'border-slate-700/50 hover:border-slate-600'}`}>
+                          <div key={i} onClick={()=>setActiveSlideIdx(i)} className={`glass-panel p-3 rounded-xl border transition-all cursor-pointer flex gap-4 group relative ${activeSlideIdx === i ? 'border-fuchsia-500 bg-fuchsia-900/10' : (isSelected ? 'border-indigo-500 bg-indigo-900/20' : 'border-slate-700/50 hover:border-slate-600')}`}>
+                            
+                            {/* ☑️ 選択チェックボックス */}
+                            <div className="absolute top-2 right-2 z-10" onClick={e => e.stopPropagation()}>
+                                <input type="checkbox" checked={isSelected} onChange={() => toggleSlideSelection(i)} className="w-4 h-4 cursor-pointer accent-indigo-500" />
+                            </div>
+
                             <div className="w-24 shrink-0 aspect-video bg-black rounded-lg overflow-hidden relative mt-1">
                                 <img src={s.imageDataUrl} className="w-full h-full object-cover opacity-80"/>
                                 <div className="absolute top-0 left-0 bg-black/60 text-[9px] px-1.5 py-0.5 text-white font-mono rounded-br-md">#{i+1}</div>
                                 {hasStock && <div className="absolute bottom-1 right-1 w-2 h-2 rounded-full bg-emerald-500"></div>}
                             </div>
                             <div className="flex-1 flex flex-col gap-2">
-                               <textarea value={s.script} onChange={e=>{ const ns = [...slides]; ns[i].script = e.target.value; setSlides(ns); }} onClick={e=>e.stopPropagation()} className="w-full h-20 bg-slate-950/30 border border-slate-700/50 rounded-lg p-2 text-xs text-slate-300 focus:text-white outline-none resize-y"/>
+                               <textarea value={s.script} onChange={e=>{ const ns = [...slides]; ns[i].script = e.target.value; setSlides(ns); }} onClick={e=>e.stopPropagation()} className="w-full h-20 bg-slate-950/30 border border-slate-700/50 rounded-lg p-2 text-xs text-slate-300 focus:text-white outline-none resize-y pr-6"/>
                                <div className="flex justify-end gap-2 items-center">
                                  {hasStock ? <span className="text-[10px] text-emerald-400">Ready</span> : <span className="text-[10px] text-slate-500">Empty</span>}
                                  <button onClick={e=>{e.stopPropagation(); generateSingleStock(i);}} className="text-[9px] bg-slate-800 text-slate-300 px-3 py-1 rounded border border-slate-600 hover:bg-slate-700">更新(単体)</button>
@@ -1554,16 +1526,16 @@
               )}
             </div>
 
-            {/* 手動エディタ (表示非推奨だが残してある機能) */}
+            {/* ✂️ 復活した手動エディタ */}
             {showManualEditor && fullBuffer && audioMode === 'eco' && (
               <div className="absolute inset-0 z-50 bg-black/95 flex flex-col p-6 animate-fade-in backdrop-blur-xl">
                  <div className="flex justify-between items-center mb-6 border-b border-slate-800 pb-4">
                     <div>
-                        <h2 className="text-2xl font-bold text-white">✂️ 手動カット調整 (エコモード)</h2>
+                        <h2 className="text-2xl font-bold text-white">✂️ 手動カット調整 (スマート・エコモード)</h2>
                         <p className="text-xs text-slate-400 mt-1">±ボタンで微調整してください。</p>
                     </div>
                     <div className="flex gap-3">
-                        <button onClick={()=>{pauseEditorSegment(); setShowManualEditor(false);}} className="px-4 py-2 rounded-lg bg-slate-800 text-white">キャンセル</button>
+                        <button onClick={()=>{pauseEditorSegment(); setShowManualEditor(false);}} className="px-4 py-2 rounded-lg bg-slate-800 text-white">閉じる</button>
                         <button onClick={applyManualSplit} className="px-6 py-2 rounded-lg bg-gradient-to-r from-emerald-600 to-teal-600 text-white font-bold">この設定で分割を確定</button>
                     </div>
                  </div>
@@ -1582,11 +1554,11 @@
                                <div className="flex-1 flex flex-col gap-3 justify-between">
                                    <div className="flex gap-2">
                                        <textarea value={s.script} onChange={(e)=>{ const ns = [...slides]; ns[i].script = e.target.value; setSlides(ns); }} className="flex-1 h-16 bg-black/40 border border-slate-600 rounded-lg p-2 text-xs text-slate-200 outline-none" />
-                                       <button onClick={()=>regenerateSingleInEditor(i)} className="w-16 bg-slate-800 text-fuchsia-400 font-bold rounded-lg text-[10px] border border-slate-600">🔄 再生成</button>
+                                       <button onClick={()=>regenerateSingleInEditor(i)} className="w-16 bg-slate-800 text-fuchsia-400 font-bold rounded-lg text-[10px] border border-slate-600 hover:bg-slate-700">🔄 再生成</button>
                                    </div>
                                    <div className="flex items-center justify-end gap-2 text-xs text-slate-300">
-                                       <button onClick={()=>adjustSplitTime(i, -0.5)} className="px-2 py-1 bg-slate-800 rounded">-0.5s</button>
-                                       <button onClick={()=>adjustSplitTime(i, -0.1)} className="px-2 py-1 bg-slate-800 rounded">-0.1s</button>
+                                       <button onClick={()=>adjustSplitTime(i, -0.5)} className="px-2 py-1 bg-slate-800 rounded hover:bg-slate-700">-0.5s</button>
+                                       <button onClick={()=>adjustSplitTime(i, -0.1)} className="px-2 py-1 bg-slate-800 rounded hover:bg-slate-700">-0.1s</button>
                                        {editingSplitIdx === i ? ( 
                                            <input type="number" step="0.01" defaultValue={(manualSplitTimes[i] || 0).toFixed(2)} autoFocus 
                                                   onBlur={(e) => { handleSplitTimeChange(i, e.target.value); setEditingSplitIdx(-1); }} 
@@ -1595,11 +1567,11 @@
                                        ) : ( 
                                            <div onDoubleClick={() => setEditingSplitIdx(i)} className="w-16 text-center py-1 text-xs text-white font-mono cursor-pointer border border-slate-700 bg-black rounded">{(manualSplitTimes[i] || 0).toFixed(2)}</div> 
                                        )}
-                                       <button onClick={()=>adjustSplitTime(i, 0.1)} className="px-2 py-1 bg-slate-800 rounded">+0.1s</button>
-                                       <button onClick={()=>adjustSplitTime(i, 0.5)} className="px-2 py-1 bg-slate-800 rounded">+0.5s</button>
+                                       <button onClick={()=>adjustSplitTime(i, 0.1)} className="px-2 py-1 bg-slate-800 rounded hover:bg-slate-700">+0.1s</button>
+                                       <button onClick={()=>adjustSplitTime(i, 0.5)} className="px-2 py-1 bg-slate-800 rounded hover:bg-slate-700">+0.5s</button>
                                    </div>
                                    <div className="flex items-center gap-4 p-2 rounded-xl border bg-black/40 border-slate-700">
-                                       <button onClick={() => togglePlayPause(i, startSec, endSec, duration)} className="w-10 h-10 rounded-full flex items-center justify-center bg-emerald-600/20 text-emerald-400 text-lg">
+                                       <button onClick={() => togglePlayPause(i, startSec, endSec, duration)} className="w-10 h-10 rounded-full flex items-center justify-center bg-emerald-600/20 text-emerald-400 text-lg hover:bg-emerald-600/30">
                                            {isThisActive && editorIsPlaying ? '⏸️' : '▶'}
                                        </button>
                                        <input type="range" min="0" max="1" step="0.001" value={isThisActive ? editorSeekRatio : 0} 
