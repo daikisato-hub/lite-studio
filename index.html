@@ -61,31 +61,46 @@
         background-image: linear-gradient(rgba(30, 20, 50, 0.3) 1px, transparent 1px), linear-gradient(90deg, rgba(30, 20, 50, 0.3) 1px, transparent 1px); 
         background-size: 40px 40px; 
     }
+    
     .drag-active { 
         border-color: #d946ef; 
         background-color: rgba(217, 70, 239, 0.1); 
         box-shadow: 0 0 20px rgba(217, 70, 239, 0.2); 
     }
+    
     .animate-fade-in { animation: fadeIn 0.3s ease-out; }
     @keyframes fadeIn { 
         from { opacity: 0; transform: translateY(10px); } 
         to { opacity: 1; transform: translateY(0); } 
     }
     
-    .custom-range { -webkit-appearance: none; background: transparent; height: 28px; margin: 0; cursor: pointer; }
+    .custom-range { 
+        -webkit-appearance: none; 
+        background: transparent; 
+        height: 28px; 
+        width: 100%;
+        margin: 0; 
+        cursor: pointer; 
+    }
     .custom-range:focus { outline: none; }
     .custom-range::-webkit-slider-thumb { 
         -webkit-appearance: none; 
-        height: 18px; width: 18px; 
+        height: 18px; 
+        width: 18px; 
         border-radius: 50%; 
         background: #d946ef; 
         cursor: pointer; 
         margin-top: -7px; 
         box-shadow: 0 0 8px rgba(217, 70, 239, 0.9); 
-        position: relative; z-index: 10; 
+        position: relative; 
+        z-index: 10; 
     }
     .custom-range::-webkit-slider-runnable-track { 
-        width: 100%; height: 4px; cursor: pointer; background: #475569; border-radius: 2px; 
+        width: 100%; 
+        height: 4px; 
+        cursor: pointer; 
+        background: #475569; 
+        border-radius: 2px; 
     }
   </style>
 </head>
@@ -113,9 +128,9 @@
           const response = await fetch(url, options);
           if (!response.ok) {
             if (response.status === 429) {
-                throw new Error("🤖 APIが少し息切れしています（無料枠の制限）。少し休ませてから再度お試しください☕");
+                throw new Error("🤖 APIの無料枠制限で息切れしています。1分ほどお待ちください☕");
             } else if (response.status === 400) {
-                throw new Error("🔑 APIキーが無効か、入力が間違っているようです。もう一度確認してみてください。");
+                throw new Error("🔑 APIキーが無効か間違っています。設定を確認してください。");
             } else {
                 throw new Error(`予期せぬ通信エラーが発生しました(${response.status})。`);
             }
@@ -123,7 +138,8 @@
           return response;
         } catch (e) {
           lastError = e;
-          if (i < delays.length && !e.message.includes("APIキーが無効")) {
+          // 400エラー（キー間違い）以外なら自動リトライする
+          if (i < delays.length && !e.message.includes("APIキー")) {
               await sleep(delays[i]);
           } else {
               throw lastError;
@@ -134,7 +150,7 @@
     };
 
     // ==========================================
-    // トースト通知システム
+    // 通知（トースト）システム
     // ==========================================
     const ToastContext = React.createContext();
 
@@ -154,7 +170,7 @@
                 {children}
                 <div className="fixed top-4 right-4 z-50 flex flex-col gap-2 pointer-events-none">
                     {toasts.map(t => (
-                        <div key={t.id} className={`px-4 py-3 rounded-lg shadow-xl text-sm font-bold flex items-center gap-2 border border-white/10 whitespace-pre-wrap animate-fade-in max-w-md ${t.type === 'error' ? 'bg-rose-500/95 text-white' : t.type === 'success' ? 'bg-emerald-500/95 text-white' : 'bg-slate-800/95 text-white'}`}>
+                        <div key={t.id} className={`px-4 py-3 rounded-lg shadow-xl text-sm font-bold flex items-center gap-2 border ${t.type === 'error' ? 'bg-rose-500/95 border-rose-400' : 'bg-emerald-500/95 border-emerald-400'} text-white animate-fade-in max-w-md`}>
                             {t.msg}
                         </div>
                     ))}
@@ -216,9 +232,11 @@
         for (let c = 0; c < channels; c++) {
             const data = buffer.getChannelData(c);
             const len = data.length;
+            // フェードイン
             for (let i = 0; i < fadeLength; i++) {
                 data[i] *= 0.5 * (1 - Math.cos(Math.PI * (i / fadeLength))); 
             }
+            // フェードアウト
             for (let i = 0; i < fadeLength; i++) {
                 data[len - 1 - i] *= 0.5 * (1 - Math.cos(Math.PI * (i / fadeLength)));
             }
@@ -226,7 +244,9 @@
         return buffer;
     }
 
+    // ==========================================
     // エコモード用の自動カット推測アルゴリズム
+    // ==========================================
     function calculateSplitTimes(fullBuffer, texts) {
         const count = texts.length;
         if (count <= 1) return [];
@@ -235,6 +255,7 @@
         const sampleRate = fullBuffer.sampleRate;
         const totalDuration = fullBuffer.duration;
 
+        // 文字数と句読点で長さを推測
         const lengths = texts.map(t => {
             const normalized = normalizeText(t);
             const punctuationCount = (normalized.match(/[。！？\.\!\?]/g) || []).length;
@@ -250,6 +271,7 @@
             expectedSplitTimes.push((accLen / totalVirtualLength) * totalDuration);
         }
 
+        // 無音区間を検知
         const silences = [];
         let isSilent = false; 
         let startIdx = 0;
@@ -275,6 +297,7 @@
             silences.push({ start: startIdx, end: channelData.length, midTime: ((startIdx + channelData.length) / 2) / sampleRate });
         }
 
+        // 推測時間と実際の無音区間をマッチング
         const actualSplitTimes = [];
         const usedSilences = new Set();
         
@@ -355,7 +378,7 @@
       let parts = text.split(/([。！？\.!?、,])/g);
       let chunks = [];
       
-      for(let i=0; i<parts.length; i+=2) {
+      for(let i = 0; i < parts.length; i += 2) {
           let sentence = parts[i] + (parts[i+1] || "");
           if(!sentence.trim()) continue;
           chunks.push(sentence);
@@ -402,6 +425,8 @@
     // ==========================================
     function MainApp() {
       const toast = useToast();
+      
+      // アプリ全体の状態管理
       const [slides, setSlides] = useState([]);
       const [step, setStep] = useState(1);
       const [jsonText, setJsonText] = useState('');
@@ -412,19 +437,22 @@
       const [localApiKey, setLocalApiKey] = useState('');
       const [showApiKeyModal, setShowApiKeyModal] = useState(false); 
       
-      const [audioMode, setAudioMode] = useState('pro'); 
+      const [audioMode, setAudioMode] = useState('pro'); // 'eco' or 'pro'
       const [hasSavedData, setHasSavedData] = useState(false); 
       
       const [showSubtitle, setShowSubtitle] = useState(true);
       const [voiceName, setVoiceName] = useState('Kore');
       const [activeSlideIdx, setActiveSlideIdx] = useState(0);
       
+      // UIとドラッグ操作用の状態（★前回消してしまった必須部分です）
       const canvasRef = useRef(null);
       const containerRef = useRef(null);
+      const preloadedImagesRef = useRef([]);
+      const [isDraggingSplitter, setIsDraggingSplitter] = useState(false);
       const [leftPanelWidth, setLeftPanelWidth] = useState(40);
       const [dragActive, setDragActive] = useState(false);
-      const preloadedImagesRef = useRef([]);
 
+      // 手動エディタ用の状態
       const [fullBuffer, setFullBuffer] = useState(null);
       const [showManualEditor, setShowManualEditor] = useState(false);
       const [manualSplitTimes, setManualSplitTimes] = useState([]);
@@ -440,7 +468,9 @@
       const editorAnimRef = useRef(null);
       const editorAudioRef = useRef({ source: null, startTime: 0, offset: 0, duration: 0 });
 
-      // データ復元（localForage）
+      // ------------------------------------------------
+      // 安全なデータ復元（localForage）
+      // ------------------------------------------------
       useEffect(() => {
         try {
             const savedKey = localStorage.getItem('liteStudioApiKey');
@@ -451,13 +481,14 @@
                     if (data && data.slides && data.slides.length > 0) {
                         setHasSavedData(true);
                     }
-                }).catch(e => console.warn(e));
+                }).catch(e => console.warn("localforage error", e));
             }
         } catch(e) { 
-            console.warn("Storage restricted", e); 
+            console.warn("Storage access restricted", e); 
         }
       }, []);
 
+      // スライドや設定が変わるたびに自動保存
       useEffect(() => {
           if (typeof window.localforage !== 'undefined') {
               if (slides.length > 0) {
@@ -488,9 +519,12 @@
           setLocalApiKey(key);
           try { localStorage.setItem('liteStudioApiKey', key); } catch(e){}
           setShowApiKeyModal(false);
-          toast("APIキーを安全に保存しました", "success");
+          toast("APIキーをブラウザに安全に保存しました", "success");
       };
 
+      // ------------------------------------------------
+      // 画面描画ロジック
+      // ------------------------------------------------
       const updatePlaybackState = useCallback((idx, isPlaying, ratio) => {
           setEditorActiveIdx(idx); 
           setEditorIsPlaying(isPlaying);
@@ -563,13 +597,14 @@
         e.stopPropagation(); 
         setDragActive(false);
         if (e.dataTransfer.files && e.dataTransfer.files[0] && e.dataTransfer.files[0].type === "application/pdf") {
-            setStatus("PDFレンダリング中...");
+            setStatus("PDF読込中...");
             try { 
                 setSlides(await renderSlidesFromPdf(e.dataTransfer.files[0])); 
                 setStep(2); 
                 setStatus(""); 
                 toast("PDF読込完了", "success"); 
-            } catch(err) { 
+            } 
+            catch(err) { 
                 toast(err.message, "error"); 
                 setStatus("エラー"); 
             }
@@ -605,7 +640,9 @@
             toast("JSONエラー: " + err.message, "error"); 
         }
       };
-
+      // ------------------------------------------------
+      // エコモード：一括生成
+      // ------------------------------------------------
       const generateStockAudioEco = async () => {
         if (!localApiKey) { setShowApiKeyModal(true); return; }
         setIsBusy(true); 
@@ -652,6 +689,9 @@
         }
       };
 
+      // ------------------------------------------------
+      // プロモード：個別生成（ズレなし完全自動）
+      // ------------------------------------------------
       const generateStockAudioPro = async () => {
         if (!localApiKey) { setShowApiKeyModal(true); return; }
         setIsBusy(true); 
@@ -706,6 +746,9 @@
         setStatus("");
       };
 
+      // ------------------------------------------------
+      // 単体生成と再生機能
+      // ------------------------------------------------
       const generateSingleStock = async (idx) => {
           if (!localApiKey) { setShowApiKeyModal(true); return; }
           setIsBusy(true); 
@@ -730,6 +773,7 @@
               const data = await response.json(); 
               const buffer = pcm16ToAudioBuffer(data.candidates[0].content.parts[0].inlineData.data, ctx);
               applyFadeInOut(buffer, ctx); 
+              
               audioStock.set(idx, buffer);
               toast(`スライド ${idx+1} の音声を個別に更新しました`, "success");
           } catch(e) { 
@@ -787,9 +831,10 @@
             globalSource.onended = () => { globalSource = null; };
         }
       };
-      // ==========================================
-      // 最終エンコード処理 (WebCodecs API)
-      // ==========================================
+
+      // ------------------------------------------------
+      // 最終出力 (MP4エンコード)
+      // ------------------------------------------------
       const exportVideoFromStock = async () => {
           const missing = slides.findIndex((_, i) => !audioStock.has(i) && normalizeText(slides[i].script) !== "");
           if (missing !== -1) { 
@@ -817,7 +862,6 @@
               const FPS = 30; 
               const TARGET_SAMPLE_RATE = 44100;
 
-              // ★前回の反省を活かし、fastStart指定を確実に追加しています
               let muxer = new Mp4Muxer.Muxer({
                   target: new Mp4Muxer.ArrayBufferTarget(),
                   video: { codec: 'avc', width: 1280, height: 720 },
@@ -850,7 +894,6 @@
               let videoTimestampUs = 0; 
               let audioTimestampUs = 0;
 
-              // 金属音を除去するノイズフィルター（アップサンプリング）
               async function resampleTo44100Stereo(buffer) {
                   if (!buffer) return null;
                   const OfflineCtx = window.OfflineAudioContext || window.webkitOfflineAudioContext;
@@ -925,7 +968,6 @@
                   audioTimestampUs += (frames / TARGET_SAMPLE_RATE) * 1000000;
               }
 
-              // メインのエンコードループ
               for (let i = 0; i < slides.length; i++) {
                   setActiveSlideIdx(i); 
                   setStatus(`MP4生成中: ${i+1}/${slides.length}枚目`);
@@ -935,7 +977,6 @@
                   const preSilence = 0.5; 
                   const postSilence = 1.5;
 
-                  // 音声タイムラインの配置
                   await encodeSilence(preSilence);
                   if (buffer) {
                       await encodeAudioBuffer(buffer); 
@@ -944,7 +985,6 @@
                   }
                   await encodeSilence(postSilence);
 
-                  // 映像タイムラインの配置
                   const totalFrames = Math.floor((preSilence + audioDur + postSilence) * FPS);
                   const segments = splitForSubtitles(normalizeText(slides[i].script));
 
@@ -989,9 +1029,9 @@
           }
       };
 
-      // ==========================================
+      // ------------------------------------------------
       // 手動エディタ（エコモード用）の機能群
-      // ==========================================
+      // ------------------------------------------------
       const adjustSplitTime = (idx, delta) => {
           setManualSplitTimes(prev => {
               const arr = [...prev];
@@ -1089,7 +1129,9 @@
               pauseEditorSegment();
           } else {
               let ratio = 0;
-              if (activeIdxRef.current === idx) ratio = editorSeekRatio >= 1 ? 0 : editorSeekRatio;
+              if (activeIdxRef.current === idx) {
+                  ratio = editorSeekRatio >= 1 ? 0 : editorSeekRatio;
+              }
               startEditorSegment(idx, start, end, duration, ratio);
           }
       };
@@ -1112,9 +1154,9 @@
           }
       };
 
-      // ==========================================
-      // UI / 描画部分 (render)
-      // ==========================================
+      // ------------------------------------------------
+      // レンダリング (UI)
+      // ------------------------------------------------
       return (
         <div className="h-screen flex flex-col text-sm" 
              onMouseMove={e => { 
@@ -1147,12 +1189,13 @@
                           <button onClick={()=>saveApiKey(document.getElementById('apiKeyInput').value)} className="flex-1 py-3 rounded-lg bg-gradient-to-r from-fuchsia-600 to-purple-600 text-white font-bold hover:from-fuchsia-500 transition">保存して開始</button>
                       </div>
                       <div className="mt-6 text-center">
-                          <a href="https://aistudio.google.com/app/apikey" target="_blank" className="text-[10px] text-fuchsia-400 hover:text-fuchsia-300 underline">→ 無料APIキーの取得方法はこちら (約3分)</a>
+                          <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer" className="text-[10px] text-fuchsia-400 hover:text-fuchsia-300 underline">→ 無料APIキーの取得方法はこちら (約3分)</a>
                       </div>
                   </div>
               </div>
           )}
 
+          {/* ヘッダー */}
           <header className="glass-panel border-b border-slate-700/50 p-3 flex justify-between items-center z-10 sticky top-0">
             <div className="flex items-center gap-4">
               <h1 className="text-xl font-black italic bg-gradient-to-r from-fuchsia-400 via-purple-400 to-indigo-400 bg-clip-text text-transparent drop-shadow-sm">
@@ -1354,6 +1397,7 @@
               </div>
             </div>
 
+            {/* スプリッター（左右の境界線） */}
             <div className={`w-1 z-20 cursor-col-resize transition-colors ${isDraggingSplitter ? 'bg-fuchsia-500' : 'bg-slate-800 hover:bg-fuchsia-500'}`} onMouseDown={(e) => { e.preventDefault(); setIsDraggingSplitter(true); }} />
 
             {/* 右パネル：プレビュー */}
