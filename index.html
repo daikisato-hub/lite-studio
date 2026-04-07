@@ -37,12 +37,14 @@
     ::-webkit-scrollbar-track { background: #0f172a; }
     ::-webkit-scrollbar-thumb { background: #4c1d95; border-radius: 3px; }
     ::-webkit-scrollbar-thumb:hover { background: #db2777; }
+    
     .glass-panel { 
         background: rgba(15, 23, 42, 0.6); 
         backdrop-filter: blur(12px); 
         -webkit-backdrop-filter: blur(12px); 
         border: 1px solid rgba(255, 255, 255, 0.08); 
     }
+    
     @keyframes wave { 
         0%, 100% { height: 10px; transform: scaleY(1); background: #8b5cf6; } 
         50% { height: 24px; transform: scaleY(1.5); background: #ec4899; } 
@@ -53,6 +55,7 @@
     .wave-bar:nth-child(3) { animation-delay: 0.2s; } 
     .wave-bar:nth-child(4) { animation-delay: 0.3s; } 
     .wave-bar:nth-child(5) { animation-delay: 0.4s; }
+    
     .canvas-container { 
         background-color: #000; 
         background-image: linear-gradient(rgba(30, 20, 50, 0.3) 1px, transparent 1px), linear-gradient(90deg, rgba(30, 20, 50, 0.3) 1px, transparent 1px); 
@@ -68,6 +71,7 @@
         from { opacity: 0; transform: translateY(10px); } 
         to { opacity: 1; transform: translateY(0); } 
     }
+    
     .custom-range { -webkit-appearance: none; background: transparent; height: 28px; margin: 0; cursor: pointer; }
     .custom-range:focus { outline: none; }
     .custom-range::-webkit-slider-thumb { 
@@ -119,7 +123,6 @@
           return response;
         } catch (e) {
           lastError = e;
-          // 400エラー（キー間違い）以外なら自動リトライする
           if (i < delays.length && !e.message.includes("APIキーが無効")) {
               await sleep(delays[i]);
           } else {
@@ -131,7 +134,7 @@
     };
 
     // ==========================================
-    // 通知（トースト）システム
+    // トースト通知システム
     // ==========================================
     const ToastContext = React.createContext();
 
@@ -213,11 +216,9 @@
         for (let c = 0; c < channels; c++) {
             const data = buffer.getChannelData(c);
             const len = data.length;
-            // フェードイン
             for (let i = 0; i < fadeLength; i++) {
                 data[i] *= 0.5 * (1 - Math.cos(Math.PI * (i / fadeLength))); 
             }
-            // フェードアウト
             for (let i = 0; i < fadeLength; i++) {
                 data[len - 1 - i] *= 0.5 * (1 - Math.cos(Math.PI * (i / fadeLength)));
             }
@@ -225,9 +226,7 @@
         return buffer;
     }
 
-    // ==========================================
     // エコモード用の自動カット推測アルゴリズム
-    // ==========================================
     function calculateSplitTimes(fullBuffer, texts) {
         const count = texts.length;
         if (count <= 1) return [];
@@ -236,7 +235,6 @@
         const sampleRate = fullBuffer.sampleRate;
         const totalDuration = fullBuffer.duration;
 
-        // 文字数と句読点で長さを推測
         const lengths = texts.map(t => {
             const normalized = normalizeText(t);
             const punctuationCount = (normalized.match(/[。！？\.\!\?]/g) || []).length;
@@ -252,14 +250,16 @@
             expectedSplitTimes.push((accLen / totalVirtualLength) * totalDuration);
         }
 
-        // 無音区間を検知
         const silences = [];
         let isSilent = false; 
         let startIdx = 0;
         
         for (let i = 0; i < channelData.length; i++) {
             if (Math.abs(channelData[i]) < 0.01) {
-                if (!isSilent) { isSilent = true; startIdx = i; }
+                if (!isSilent) { 
+                    isSilent = true; 
+                    startIdx = i; 
+                }
             } else {
                 if (isSilent) {
                     isSilent = false;
@@ -275,7 +275,6 @@
             silences.push({ start: startIdx, end: channelData.length, midTime: ((startIdx + channelData.length) / 2) / sampleRate });
         }
 
-        // 推測時間と実際の無音区間をマッチング
         const actualSplitTimes = [];
         const usedSilences = new Set();
         
@@ -335,7 +334,7 @@
     }
 
     // ==========================================
-    // PDF・画像処理・字幕処理
+    // 画像・字幕・PDFの処理
     // ==========================================
     const preloadImages = async (slides) => {
         const loadedImages = [];
@@ -399,7 +398,7 @@
     }
 
     // ==========================================
-    // メインアプリケーション (React Component)
+    // MainApp コンポーネント
     // ==========================================
     function MainApp() {
       const toast = useToast();
@@ -413,7 +412,6 @@
       const [localApiKey, setLocalApiKey] = useState('');
       const [showApiKeyModal, setShowApiKeyModal] = useState(false); 
       
-      // エコモード(eco) か プロモード(pro)
       const [audioMode, setAudioMode] = useState('pro'); 
       const [hasSavedData, setHasSavedData] = useState(false); 
       
@@ -442,9 +440,7 @@
       const editorAnimRef = useRef(null);
       const editorAudioRef = useRef({ source: null, startTime: 0, offset: 0, duration: 0 });
 
-      // ------------------------------------------------
-      // 安全なデータ復元（白画面防止・localForage）
-      // ------------------------------------------------
+      // データ復元（localForage）
       useEffect(() => {
         try {
             const savedKey = localStorage.getItem('liteStudioApiKey');
@@ -455,14 +451,13 @@
                     if (data && data.slides && data.slides.length > 0) {
                         setHasSavedData(true);
                     }
-                }).catch(e => console.warn("localforage error", e));
+                }).catch(e => console.warn(e));
             }
         } catch(e) { 
-            console.warn("Storage access restricted", e); 
+            console.warn("Storage restricted", e); 
         }
       }, []);
 
-      // スライドや設定が変わるたびに自動保存
       useEffect(() => {
           if (typeof window.localforage !== 'undefined') {
               if (slides.length > 0) {
@@ -493,12 +488,9 @@
           setLocalApiKey(key);
           try { localStorage.setItem('liteStudioApiKey', key); } catch(e){}
           setShowApiKeyModal(false);
-          toast("APIキーをブラウザに安全に保存しました", "success");
+          toast("APIキーを安全に保存しました", "success");
       };
 
-      // ------------------------------------------------
-      // 画面描画ロジック
-      // ------------------------------------------------
       const updatePlaybackState = useCallback((idx, isPlaying, ratio) => {
           setEditorActiveIdx(idx); 
           setEditorIsPlaying(isPlaying);
@@ -566,9 +558,6 @@
         }
       }, [activeSlideIdx, slides, drawSlideSync, isBusy]);
 
-      // ------------------------------------------------
-      // PDF・JSONアップロード処理
-      // ------------------------------------------------
       const handleDrop = async (e) => {
         e.preventDefault(); 
         e.stopPropagation(); 
@@ -580,8 +569,7 @@
                 setStep(2); 
                 setStatus(""); 
                 toast("PDF読込完了", "success"); 
-            } 
-            catch(err) { 
+            } catch(err) { 
                 toast(err.message, "error"); 
                 setStatus("エラー"); 
             }
@@ -609,7 +597,7 @@
           setStep(3);
           
           if (outOfRangeCount > 0) {
-              toast(`✅ 成功: ${successCount}件\n⚠️ 未反映: ${outOfRangeCount}件\nPDFの枚数を超えたデータはカットされました。`, "error"); 
+              toast(`✅ 成功: ${successCount}件\n⚠️ 未反映: ${outOfRangeCount}件`, "error"); 
           } else {
               toast(`✅ ${successCount}件の適用が完了しました`, "success");
           }
@@ -618,19 +606,15 @@
         }
       };
 
-      // ------------------------------------------------
-      // エコモード：一括生成
-      // ------------------------------------------------
       const generateStockAudioEco = async () => {
         if (!localApiKey) { setShowApiKeyModal(true); return; }
         setIsBusy(true); 
-        stopGlobalAudio();
+        stopGlobalAudio(); 
         const ctx = getAudioContext(); 
         setStatus("エコモードで音声を一括生成中..."); 
         setProgress(30);
 
         try {
-            // 区切りを明確にする特殊空白
             const separator = "。\n\n\n\n　　　　　\n\n\n\n"; 
             const combinedScript = slides.map(s => {
                 let txt = normalizeText(s.script);
@@ -657,7 +641,7 @@
             setEditorIndividualBuffers(new Map()); 
             setManualSplitTimes(calculateSplitTimes(buffer, slides.map(s => s.script)));
             
-            setShowManualEditor(true);
+            setShowManualEditor(true); 
             toast("音声の生成が完了しました！カット位置を確認してください。", "success");
         } catch (e) { 
             toast(e.message, "error"); 
@@ -668,13 +652,10 @@
         }
       };
 
-      // ------------------------------------------------
-      // プロモード：個別生成（ズレなし完全自動）
-      // ------------------------------------------------
       const generateStockAudioPro = async () => {
         if (!localApiKey) { setShowApiKeyModal(true); return; }
         setIsBusy(true); 
-        stopGlobalAudio();
+        stopGlobalAudio(); 
         const ctx = getAudioContext(); 
         
         audioStock.clear(); 
@@ -704,28 +685,27 @@
                 const buffer = pcm16ToAudioBuffer(data.candidates[0].content.parts[0].inlineData.data, ctx);
                 applyFadeInOut(buffer, ctx);
                 
-                audioStock.set(i, buffer);
+                audioStock.set(i, buffer); 
                 setEditorIndividualBuffers(prev => { const m = new Map(prev); m.set(i, buffer); return m; });
                 
                 if(i < slides.length - 1) await sleep(1000); 
-            } catch (e) {
-                toast(`スライド${i+1}でエラー: ${e.message}`, "error");
+            } catch (e) { 
+                toast(`スライド${i+1}でエラー: ${e.message}`, "error"); 
                 errorOccurred = true; 
                 break; 
             }
         }
         
-        if (!errorOccurred) {
+        if (!errorOccurred) { 
             setProgress(100); 
             toast("✨ 全スライドの音声を完璧なタイミングで生成しました！", "success"); 
-            setStep(4);
+            setStep(4); 
         }
         setIsBusy(false); 
         setProgress(0); 
         setStatus("");
       };
 
-      // 単体での再生成（エコ/プロ共通）
       const generateSingleStock = async (idx) => {
           if (!localApiKey) { setShowApiKeyModal(true); return; }
           setIsBusy(true); 
@@ -734,16 +714,22 @@
           
           try {
               const text = normalizeText(slides[idx].script);
-              if (!text) { audioStock.delete(idx); return; }
-              
+              if (!text) { 
+                  audioStock.delete(idx); 
+                  return; 
+              }
               const response = await fetchWithBackoff(`${GEMINI_URL}?key=${localApiKey}`, { 
-                  method: "POST", headers: { "Content-Type": "application/json" }, 
-                  body: JSON.stringify({ contents: [{ parts: [{ text: text }] }], generationConfig: { responseModalities: ["AUDIO"], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voiceName } } } }, model: GEMINI_MODEL }) 
+                  method: "POST", 
+                  headers: { "Content-Type": "application/json" }, 
+                  body: JSON.stringify({ 
+                      contents: [{ parts: [{ text: text }] }], 
+                      generationConfig: { responseModalities: ["AUDIO"], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voiceName } } } }, 
+                      model: GEMINI_MODEL 
+                  }) 
               });
               const data = await response.json(); 
               const buffer = pcm16ToAudioBuffer(data.candidates[0].content.parts[0].inlineData.data, ctx);
               applyFadeInOut(buffer, ctx); 
-              
               audioStock.set(idx, buffer);
               toast(`スライド ${idx+1} の音声を個別に更新しました`, "success");
           } catch(e) { 
@@ -767,8 +753,13 @@
                   return; 
               }
               const response = await fetchWithBackoff(`${GEMINI_URL}?key=${localApiKey}`, { 
-                  method: "POST", headers: { "Content-Type": "application/json" }, 
-                  body: JSON.stringify({ contents: [{ parts: [{ text: text }] }], generationConfig: { responseModalities: ["AUDIO"], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voiceName } } } }, model: GEMINI_MODEL }) 
+                  method: "POST", 
+                  headers: { "Content-Type": "application/json" }, 
+                  body: JSON.stringify({ 
+                      contents: [{ parts: [{ text: text }] }], 
+                      generationConfig: { responseModalities: ["AUDIO"], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voiceName } } } }, 
+                      model: GEMINI_MODEL 
+                  }) 
               });
               const data = await response.json(); 
               const buffer = pcm16ToAudioBuffer(data.candidates[0].content.parts[0].inlineData.data, ctx);
@@ -786,20 +777,19 @@
       };
 
       const playStockAudio = async (idx) => {
-        stopGlobalAudio();
+        stopGlobalAudio(); 
         const ctx = getAudioContext();
         if (audioStock.has(idx)) {
-            globalSource = ctx.createBufferSource();
+            globalSource = ctx.createBufferSource(); 
             globalSource.buffer = audioStock.get(idx);
-            globalSource.connect(ctx.destination);
-            globalSource.start();
+            globalSource.connect(ctx.destination); 
+            globalSource.start(); 
             globalSource.onended = () => { globalSource = null; };
         }
       };
-
-      // ------------------------------------------------
+      // ==========================================
       // 最終エンコード処理 (WebCodecs API)
-      // ------------------------------------------------
+      // ==========================================
       const exportVideoFromStock = async () => {
           const missing = slides.findIndex((_, i) => !audioStock.has(i) && normalizeText(slides[i].script) !== "");
           if (missing !== -1) { 
@@ -827,7 +817,7 @@
               const FPS = 30; 
               const TARGET_SAMPLE_RATE = 44100;
 
-              // ★注意：ここでカンマ(,)を忘れずに！
+              // ★前回の反省を活かし、fastStart指定を確実に追加しています
               let muxer = new Mp4Muxer.Muxer({
                   target: new Mp4Muxer.ArrayBufferTarget(),
                   video: { codec: 'avc', width: 1280, height: 720 },
@@ -839,18 +829,28 @@
                   output: (chunk, meta) => muxer.addVideoChunk(chunk, meta), 
                   error: e => console.error(e) 
               });
-              videoEncoder.configure({ codec: 'avc1.4D001F', width: 1280, height: 720, bitrate: 2500000, framerate: FPS });
+              videoEncoder.configure({ 
+                  codec: 'avc1.4D001F', 
+                  width: 1280, height: 720, 
+                  bitrate: 2500000, 
+                  framerate: FPS 
+              });
 
               const audioEncoder = new AudioEncoder({ 
                   output: (chunk, meta) => muxer.addAudioChunk(chunk, meta), 
                   error: e => console.error(e) 
               });
-              audioEncoder.configure({ codec: 'mp4a.40.2', numberOfChannels: 2, sampleRate: TARGET_SAMPLE_RATE, bitrate: 128000 });
+              audioEncoder.configure({ 
+                  codec: 'mp4a.40.2', 
+                  numberOfChannels: 2, 
+                  sampleRate: TARGET_SAMPLE_RATE, 
+                  bitrate: 128000 
+              });
 
               let videoTimestampUs = 0; 
               let audioTimestampUs = 0;
 
-              // 金属音を除去するフィルター
+              // 金属音を除去するノイズフィルター（アップサンプリング）
               async function resampleTo44100Stereo(buffer) {
                   if (!buffer) return null;
                   const OfflineCtx = window.OfflineAudioContext || window.webkitOfflineAudioContext;
@@ -875,6 +875,7 @@
                   const chanL = resampled.getChannelData(0); 
                   const chanR = resampled.getChannelData(1);
                   const interleaved = new Float32Array(resampled.length * 2);
+                  
                   for (let i = 0; i < resampled.length; i++) { 
                       interleaved[i * 2] = chanL[i]; 
                       interleaved[i * 2 + 1] = chanR[i]; 
@@ -924,7 +925,7 @@
                   audioTimestampUs += (frames / TARGET_SAMPLE_RATE) * 1000000;
               }
 
-              // メインループ
+              // メインのエンコードループ
               for (let i = 0; i < slides.length; i++) {
                   setActiveSlideIdx(i); 
                   setStatus(`MP4生成中: ${i+1}/${slides.length}枚目`);
@@ -934,11 +935,16 @@
                   const preSilence = 0.5; 
                   const postSilence = 1.5;
 
+                  // 音声タイムラインの配置
                   await encodeSilence(preSilence);
-                  if (buffer) await encodeAudioBuffer(buffer); 
-                  else await encodeSilence(audioDur);
+                  if (buffer) {
+                      await encodeAudioBuffer(buffer); 
+                  } else {
+                      await encodeSilence(audioDur);
+                  }
                   await encodeSilence(postSilence);
 
+                  // 映像タイムラインの配置
                   const totalFrames = Math.floor((preSilence + audioDur + postSilence) * FPS);
                   const segments = splitForSubtitles(normalizeText(slides[i].script));
 
@@ -983,24 +989,34 @@
           }
       };
 
-      // ------------------------------------------------
+      // ==========================================
       // 手動エディタ（エコモード用）の機能群
-      // ------------------------------------------------
+      // ==========================================
       const adjustSplitTime = (idx, delta) => {
           setManualSplitTimes(prev => {
               const arr = [...prev];
-              for(let j = idx; j < arr.length; j++) arr[j] = Math.max(0, arr[j] + delta);
-              for(let j = 1; j < arr.length; j++) if (arr[j] <= arr[j-1]) arr[j] = arr[j-1] + 0.1;
+              for(let j = idx; j < arr.length; j++) {
+                  arr[j] = Math.max(0, arr[j] + delta);
+              }
+              for(let j = 1; j < arr.length; j++) {
+                  if (arr[j] <= arr[j-1]) arr[j] = arr[j-1] + 0.1;
+              }
               return arr;
           });
       };
 
       const handleSplitTimeChange = (idx, val) => {
-          let num = parseFloat(val); if (isNaN(num)) return;
+          let num = parseFloat(val); 
+          if (isNaN(num)) return;
           setManualSplitTimes(prev => {
-              const arr = [...prev]; const delta = num - arr[idx];
-              for(let j = idx; j < arr.length; j++) arr[j] = Math.max(0, arr[j] + delta);
-              for(let j = 1; j < arr.length; j++) if (arr[j] <= arr[j-1]) arr[j] = arr[j-1] + 0.1;
+              const arr = [...prev]; 
+              const delta = num - arr[idx];
+              for(let j = idx; j < arr.length; j++) {
+                  arr[j] = Math.max(0, arr[j] + delta);
+              }
+              for(let j = 1; j < arr.length; j++) {
+                  if (arr[j] <= arr[j-1]) arr[j] = arr[j-1] + 0.1;
+              }
               return arr;
           });
       };
@@ -1046,7 +1062,12 @@
               source.start(0, start + safeOffset, duration - safeOffset); 
           }
           
-          editorAudioRef.current = { source, startTime: ctx.currentTime, offset: startOffsetSec, duration: duration };
+          editorAudioRef.current = { 
+              source, 
+              startTime: ctx.currentTime, 
+              offset: startOffsetSec, 
+              duration: duration 
+          };
           
           const loop = () => {
               if (activeIdxRef.current !== idx || !isPlayingRef.current) return;
@@ -1064,20 +1085,31 @@
       }, [fullBuffer, editorIndividualBuffers, updatePlaybackState]);
 
       const togglePlayPause = (idx, start, end, duration) => {
-          if (activeIdxRef.current === idx && isPlayingRef.current) pauseEditorSegment();
-          else startEditorSegment(idx, start, end, duration, activeIdxRef.current === idx ? (editorSeekRatio >= 1 ? 0 : editorSeekRatio) : 0);
+          if (activeIdxRef.current === idx && isPlayingRef.current) {
+              pauseEditorSegment();
+          } else {
+              let ratio = 0;
+              if (activeIdxRef.current === idx) ratio = editorSeekRatio >= 1 ? 0 : editorSeekRatio;
+              startEditorSegment(idx, start, end, duration, ratio);
+          }
       };
 
       const handleSeekChange = (idx, ratio) => { 
           isSeekingRef.current = true; 
-          if (activeIdxRef.current !== idx) updatePlaybackState(idx, false, ratio); 
-          else setEditorSeekRatio(ratio); 
+          if (activeIdxRef.current !== idx) {
+              updatePlaybackState(idx, false, ratio); 
+          } else {
+              setEditorSeekRatio(ratio); 
+          }
       };
       
       const handleSeekEnd = (idx, start, end, duration, ratio) => { 
           isSeekingRef.current = false; 
-          if (isPlayingRef.current && activeIdxRef.current === idx) startEditorSegment(idx, start, end, duration, ratio); 
-          else updatePlaybackState(idx, false, ratio); 
+          if (isPlayingRef.current && activeIdxRef.current === idx) {
+              startEditorSegment(idx, start, end, duration, ratio); 
+          } else {
+              updatePlaybackState(idx, false, ratio); 
+          }
       };
 
       // ==========================================
@@ -1232,7 +1264,11 @@
                         </div>
                         
                         <div className="grid grid-cols-3 gap-2 mb-4">
-                            {['Kore','Fenrir','Puck'].map(v=><button key={v} onClick={()=>setVoiceName(v)} className={`text-[10px] py-1.5 rounded-md border transition-all ${voiceName===v?'bg-indigo-600 text-white border-indigo-400':'bg-slate-800 text-slate-400 border-slate-700'}`}>{v}</button>)}
+                            {['Kore','Fenrir','Puck'].map(v=>
+                                <button key={v} onClick={()=>setVoiceName(v)} className={`text-[10px] py-1.5 rounded-md border transition-all ${voiceName===v?'bg-indigo-600 text-white border-indigo-400':'bg-slate-800 text-slate-400 border-slate-700'}`}>
+                                    {v}
+                                </button>
+                            )}
                         </div>
                         
                         <button onClick={audioMode === 'eco' ? generateStockAudioEco : generateStockAudioPro} disabled={isBusy} 
@@ -1408,7 +1444,14 @@
       );
     }
 
-    function App() { return <ToastProvider><MainApp /></ToastProvider>; }
+    function App() { 
+        return (
+            <ToastProvider>
+                <MainApp />
+            </ToastProvider>
+        ); 
+    }
+    
     const root = ReactDOM.createRoot(document.getElementById('root'));
     root.render(<App />);
   </script>
